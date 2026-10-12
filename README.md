@@ -1,4 +1,4 @@
-# ElectrochemHarness v0.3.0
+# ElectrochemHarness v0.4.0
 
 面向蓝电恒流充放电导出数据的本地分析工作流：自动识别文本数据、计算关键参数、生成精炼结论、检索并核验相关 DOI，并调用 Origin 生成 SCI 风格图。
 
@@ -6,31 +6,32 @@
 
 - Windows 10/11 64 位；
 - Windows PowerShell 5.1 或更高；
-- Python 3.10 或更高，并包含 Tkinter（支持 `py -3` 或 `python`）；
+- Python 3.10 或更高，并包含 Tkinter；
 - 文献检索需要访问 Crossref；
-- Origin 2026/2026b 仅在自动绘图时需要，并且必须由使用者自行安装和授权。
+- 自动绘图支持 Origin 2021、2021b、2022、2022b、2023、2023b、2024、2024b、2025、2025b、2026和2026b。
 
-**Origin 不是数据分析的必需条件。** 没有 Origin 时可使用报告模式，仍会生成关键参数、文献证据和 Origin 可导入 CSV。
+**Origin 不是数据分析的必需条件。** 没有 Origin 时仍可生成关键参数、文献证据和 Origin 可导入 CSV。不需要独立显卡、CUDA、Docker、Node.js或额外 Python 包。
 
-不需要独立显卡、CUDA、Docker、Node.js或额外 Python 包。
+## Origin近六年兼容策略
+
+程序读取 `origin_compat.json`，自动查找2021–2026b范围内的安装；存在多个版本时默认选择最新版本，也可在界面或命令行明确指定 `Origin64.exe`。
+
+- 共同路径：Origin内嵌Python、`originpro`和稳定LabTalk样式命令；
+- 兼容降级：旧版不接受部分`set_float`、`set_int`或`save_fig(width=...)`调用时使用后备路径；
+- 运行审计：`origin_status.json`记录选择的Origin版本、`originpro`版本和降级警告；
+- 验证边界：**仅2026b完成本机实测**；2021–2026代码路径已纳入兼容范围，但每个版本仍需在对应安装和许可证环境中完成一次工程保存与图片导出验证。
 
 ## 首选方式：使用交互界面
 
-解压后双击 `start_gui.cmd` 即可打开中文交互界面。也可以在 PowerShell 中运行：
+解压后双击 `start_gui.cmd`，或运行：
 
 ```powershell
 py -3 '.\run_gui.py'
 ```
 
-交互界面可以：
+界面支持：选择蓝电文件和输出目录；填写电池体系与测试条件；控制文献检索；选择Origin版本；查看实时日志、取消任务及打开结果目录。
 
-- 浏览选择蓝电文件和输出目录；
-- 填写电池体系、活性物质、电池类型、对电极、测试电流、温度和质量归一化口径；
-- 选择是否联网检索文献、最多核验多少个 DOI；
-- 选择是否调用 Origin，或指定 `Origin64.exe`；
-- 查看实时日志、取消任务，并在完成后打开结果目录。
-
-如果只想确认本机能否创建界面而不启动分析：
+无残留GUI自检：
 
 ```powershell
 py -3 '.\run_gui.py' --check
@@ -38,13 +39,11 @@ py -3 '.\run_gui.py' --check
 
 ## 第一步：检查环境
 
-在解压目录打开 PowerShell：
-
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\check_environment.ps1'
 ```
 
-如果 Origin 位于非常规目录，可指定：
+指定某个Origin版本：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\check_environment.ps1' `
@@ -54,18 +53,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\check_environment.ps1
 
 ## 第二步：准备蓝电数据
 
-支持蓝电软件导出的 `.csv`、`.txt`、`.tsv` 和 `.dat` 文本文件：
+支持 `.csv`、`.txt`、`.tsv` 和 `.dat` 文本文件：
 
 1. 循环号、时间、电流、电压四列模式；
 2. 测试时间、比容量、电压三列模式。
 
-支持 UTF-8、UTF-8 BOM、GB18030，逗号、制表符或分号分隔。`.xls`、`.xlsx` 和蓝电专有数据库文件需要先在蓝电或 Excel 中另存为 CSV/TXT。
-
-原始文件必须保留，分析时不要覆盖原始数据。三列比容量模式使用蓝电导出的容量值，无法重新审计活性物质量归一化。
+支持 UTF-8、UTF-8 BOM、GB18030，逗号、制表符或分号分隔。`.xls`、`.xlsx` 和蓝电专有数据库文件应先另存为CSV/TXT。原始文件必须保留，分析时不要覆盖。
 
 ## 第三步：一键分析、联网检索并绘图
 
-先手动打开一次 Origin，完成许可证和用户目录初始化。然后运行：
+首次使用某个Origin版本前，应手动打开一次，完成许可证和用户目录初始化：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\run_sci_origin.ps1' `
@@ -74,9 +71,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\run_sci_origin.ps1' `
   -Guided
 ```
 
-程序会依次询问：电池体系、活性物质、电池类型、对电极、测试电流或倍率、温度、质量归一化口径。
-
-如果 Origin 未被自动找到：
+指定Origin版本：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\run_sci_origin.ps1' `
@@ -86,7 +81,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\run_sci_origin.ps1' `
   -Guided
 ```
 
-## 仅生成报告，不调用 Origin
+仅生成报告：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\run_sci_origin.ps1' `
@@ -98,38 +93,34 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\run_sci_origin.ps1' `
 
 ## 输出文件
 
-- `关键参数报告.md`：充放电比容量、库仑效率、保持率、电压平台、结论和数据价值判断；
-- `关键参数.csv`：循环级参数表；
-- `完整分析.json`：完整可审计分析结果；
-- `文献证据.json`：检索条件、DOI核验记录、摘要信息和可比性；
-- `文献比较.csv`：经核验文献的结构化比较表；
-- `Origin_充放电曲线数据.csv`：Origin 绘图输入；
-- `电化学分析.opju`、`充放电曲线.png`、`循环性能.png`：启用 Origin 时生成。
+- `关键参数报告.md`：比容量、库仑效率、保持率、电压平台、结论和价值判断；
+- `关键参数.csv`：循环参数；
+- `完整分析.json`：完整审计结果；
+- `文献证据.json`与`文献比较.csv`：DOI核验和文献对照；
+- `Origin_充放电曲线数据.csv`：Origin绘图输入；
+- `电化学分析.opju`、`充放电曲线.png`、`循环性能.png`：启用Origin时生成；
+- `origin_status.json`：Origin版本和兼容降级记录。
 
 ## 文献结论边界
 
-文献检索默认最多复核 50 个候选 DOI，只保留经 Crossref 单篇接口复核的期刊论文。只有电池体系、活性物质、电池类型/对电极、电流或倍率、温度和质量归一化口径均明确匹配的论文才标记为直接可比。
+默认最多复核50个候选DOI。只有电池体系、活性物质、电池类型/对电极、电流或倍率、温度和质量归一化口径均明确匹配的论文才标记为直接可比。Crossref不提供期刊影响因子；摘要性能值仅用于初筛，正式引用前必须阅读原文。
 
-Crossref 不提供期刊影响因子；引用次数只用于排序，不能替代论文质量判断。摘要提取的性能值仅用于初筛。正式用于论文前必须阅读原文并核对载量、电解液用量、截止电压、循环圈数、重复实验和误差。
+## Origin图形规范
 
-## Origin 图形规范
-
-- 中文：宋体；
-- 英文、数字及图例：Times New Roman；
-- 坐标轴线宽：4 pt；
-- 主刻度和次刻度：向内；
-- 同一循环同色，充放电用实线/虚线区分。
+- 中文：宋体；英文、数字及图例：Times New Roman；
+- 坐标轴线宽：4 pt；主刻度和次刻度向内；
+- 同一循环同色，充放电使用实线/虚线区分。
 
 ## 数据安全
 
-程序会将实验条件发送到 Crossref 作为检索关键词，但不会上传原始蓝电数据。不要在实验条件中填写姓名、样品保密编号或其他敏感信息。分析结果默认保存在指定的本地输出目录。
+原始蓝电数据仅在本地读取。启用文献检索后，只把实验检索条件发送到Crossref。不要在检索条件中填写姓名、保密样品编号或其他敏感信息。
 
 ## 当前限制
 
-- SCI 精炼报告和 Origin 自动绘图主要针对三列时间—比容量—电压曲线；
-- 尚未支持 CV、EIS、GITT、dQ/dV 和蓝电专有二进制数据库；
-- 不能仅凭单个电池结果证明材料机理、重复性或创新性；
-- Origin 是商业软件，不包含在本发布包中。
+- SCI精炼报告和Origin自动绘图主要针对三列时间—比容量—电压曲线；
+- 尚未支持CV、EIS、GITT、dQ/dV和蓝电专有二进制数据库；
+- 2021–2026版本需要团队成员按版本矩阵补充实机验证证据；
+- 不能仅凭单个电池结果证明材料机理、重复性或创新性。
 
 ## 运行测试
 
@@ -137,4 +128,4 @@ Crossref 不提供期刊影响因子；引用次数只用于排序，不能替�
 py -3 -m unittest discover -s '.\tests' -v
 ```
 
-如果没有 `py` 启动器，可把命令中的 `py -3` 替换为 `python`。
+没有`py`启动器时，可将`py -3`替换为`python`。

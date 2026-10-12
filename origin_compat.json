@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "minimum_year": 2021,
+  "maximum_year": 2026,
+  "supported_releases": [
+    "2021",
+    "2021b",
+    "2022",
+    "2022b",
+    "2023",
+    "2023b",
+    "2024",
+    "2024b",
+    "2025",
+    "2025b",
+    "2026",
+    "2026b"
+  ],
+  "locally_validated": [
+    "2026b"
+  ],
+  "compatibility_policy": {
+    "automation": "Origin embedded Python plus originpro and stable LabTalk styling",
+    "selection": "Select the newest detected supported release unless OriginExe is supplied",
+    "status": "Record selected release, originpro version, and compatibility warnings",
+    "claim_boundary": "Only releases in locally_validated are claimed as machine-tested"
+  }
+}

@@ -18,6 +18,8 @@ $AllowedFiles = @(
     'run_land.py',
     'run_demo.py',
     'origin_plot.py',
+    'origin_compat.json',
+    'ORIGIN_COMPATIBILITY.md',
     'check_environment.ps1',
     'build_release.ps1',
     '.gitignore',

@@ -38,7 +38,7 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertNotIn("D:\\AI\\电化学智能实验Harness", guide)
 
     def test_release_metadata_exists(self):
-        self.assertEqual((PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip(), "0.3.0")
+        self.assertEqual((PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip(), "0.4.0")
         self.assertTrue((PROJECT_ROOT / "CHANGELOG.md").is_file())
         self.assertTrue((PROJECT_ROOT / "LICENSE.txt").is_file())
 
