@@ -1,0 +1,48 @@
+name: 功能需求
+description: 提议新的数据格式、分析参数、实验指导或绘图能力
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: 请说明科学依据、输入输出和验收标准，未知信息写“待填”，不要编造参数或文献。
+  - type: textarea
+    id: goal
+    attributes:
+      label: 目标与使用场景
+    validations:
+      required: true
+  - type: textarea
+    id: input
+    attributes:
+      label: 输入数据与实验体系
+      description: 写明设备、字段、单位、电池体系和可公开程度。
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: 期望输出
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 尽量给出可测试的精度、格式或行为要求。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 科学依据或参考文献
+      description: 如引用论文，请提供已核验DOI。
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: 安全确认
+      options:
+        - label: 该需求不会绕过设备安全限制或自动执行未经审核的实验参数
+          required: true
+        - label: 所有样例均为合成或已授权脱敏数据
+          required: true

@@ -1,0 +1,54 @@
+name: 缺陷报告
+description: 报告可复现的数据解析、分析、文献或绘图问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: 请只使用合成或已授权脱敏数据，不要上传原始实验数据、凭据或个人信息。
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      placeholder: 例如 0.3.0
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 问题模块
+      options:
+        - 蓝电数据导入
+        - 数学分析
+        - 文献检索
+        - Origin绘图
+        - 交互界面
+        - 发布与安装
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请提供最小步骤和脱敏输入格式。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果与错误信息
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 数据安全确认
+      options:
+        - label: 我确认附件不含真实原始数据、凭据、个人信息或未公开样品信息
+          required: true

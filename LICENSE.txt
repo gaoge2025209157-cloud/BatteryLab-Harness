@@ -1,0 +1,20 @@
+ElectrochemHarness — Research Preview License Notice
+Version 0.3.0
+
+No open-source license has been selected for this research preview.
+The distributor may share this package with named collaborators for evaluation,
+non-commercial research, and teaching. Further redistribution, publication,
+commercial use, sublicensing, or removal of this notice requires permission from
+the copyright holder.
+
+This software is provided "as is", without warranty of any kind. Experimental
+conclusions must be independently checked against raw data, instrument settings,
+and the cited primary literature before use in research decisions or publication.
+
+Origin and OriginPro are third-party commercial products and are not included in
+this package. Users must obtain their own installation and license from OriginLab.
+Crossref metadata remains subject to Crossref's terms and the rights of the
+original publishers.
+
+Copyright holder: TO BE FILLED BY THE DISTRIBUTOR
+Contact: TO BE FILLED BY THE DISTRIBUTOR

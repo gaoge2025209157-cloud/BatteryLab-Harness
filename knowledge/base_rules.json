@@ -1,0 +1,35 @@
+[
+  {
+    "id": "general-low-coulombic-efficiency",
+    "metric": "coulombic_efficiency",
+    "operator": "<",
+    "threshold": 0.95,
+    "conditions": {"experiment_type": "galvanostatic_cycling"},
+    "claim": "当前循环的库仑效率低于通用检查阈值。",
+    "action": "先复核电流正负约定、充放电分段、截止条件和装配一致性；确认数据链无误后，再设计最小对照实验排查副反应。",
+    "source": "built-in-general-heuristic; not a literature claim",
+    "confidence": 0.65
+  },
+  {
+    "id": "general-low-capacity-retention",
+    "metric": "capacity_retention",
+    "operator": "<",
+    "threshold": 0.8,
+    "conditions": {"experiment_type": "galvanostatic_cycling"},
+    "claim": "容量保持率低于通用筛查阈值。",
+    "action": "核对参考循环选择和归一化质量，随后用重复电池区分偶发装配问题与可重复衰减。",
+    "source": "built-in-general-heuristic; not a literature claim",
+    "confidence": 0.60
+  },
+  {
+    "id": "general-large-voltage-gap",
+    "metric": "voltage_gap_V",
+    "operator": ">",
+    "threshold": 0.5,
+    "conditions": {"experiment_type": "galvanostatic_cycling"},
+    "claim": "平均充放电电压差较大。",
+    "action": "在相同倍率与温度下复测，并结合 EIS 或倍率对照判断极化是否具有重复性；不要仅凭电压差指定机理。",
+    "source": "built-in-general-heuristic; not a literature claim",
+    "confidence": 0.55
+  }
+]

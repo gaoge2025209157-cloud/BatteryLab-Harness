@@ -1,0 +1,38 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+.env.*
+
+# Kiro/local agent state
+.kiro/
+
+# Experimental data and generated analyses
+outputs/
+data/
+raw_data/
+private_data/
+*.opju
+origin_job.json
+origin_status.json
+knowledge/experiences.jsonl
+
+# Release artifacts are attached to GitHub Releases, not committed
+release/
+*.zip
+*.zip.sha256
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
