@@ -118,7 +118,7 @@ class ElectrochemApp:
         self.root.after(100, self._poll_events)
 
     def _configure_window(self):
-        self.root.title("ElectrochemHarness v0.3.0 — 电化学数据分析")
+        self.root.title("ElectrochemHarness v0.4.0 — 电化学数据分析")
         self.root.geometry("980x820")
         self.root.minsize(820, 680)
         style = ttk.Style(self.root)
