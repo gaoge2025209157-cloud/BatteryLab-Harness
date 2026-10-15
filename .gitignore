@@ -19,8 +19,17 @@ private_data/
 origin_job.json
 origin_status.json
 knowledge/experiences.jsonl
+knowledge/literature_knowledge.jsonl
 
 # Release artifacts are attached to GitHub Releases, not committed
+
+# Controlled-run audit files (normally nested under outputs/runs/)
+approval.json
+plan.json
+preflight.json
+events.jsonl
+run_record.json
+
 release/
 *.zip
 *.zip.sha256

@@ -58,7 +58,7 @@ class OriginCompatibilityTests(unittest.TestCase):
         self.assertIn("Origin 2021", guide)
         self.assertIn("2026b", guide)
         self.assertIn("仅2026b完成本机实测", guide)
-        self.assertEqual((PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip(), "0.4.0")
+        self.assertEqual((PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip(), "0.5.0-rc1")
 
 
 if __name__ == "__main__":

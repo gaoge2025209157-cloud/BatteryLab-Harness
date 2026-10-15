@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 
 CROSSREF_WORKS = "https://api.crossref.org/works"
+OPENALEX_WORKS = "https://api.openalex.org/works"
 
 
 def _is_unknown(value: str) -> bool:
@@ -96,6 +97,40 @@ def _fetch_json(url: str) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+def _abstract_from_inverted_index(index) -> str:
+    if not isinstance(index, dict) or not index:
+        return ""
+    positioned = []
+    for word, positions in index.items():
+        for position in positions or []:
+            positioned.append((int(position), str(word)))
+    positioned.sort()
+    return " ".join(word for _, word in positioned)
+
+
+def _enrich_from_openalex(record, getter):
+    if not record or record.get("abstract"):
+        return record
+    work_id = quote("https://doi.org/{}".format(record["doi"]), safe="")
+    payload = getter("{}/{}".format(OPENALEX_WORKS, work_id))
+    abstract = _abstract_from_inverted_index(payload.get("abstract_inverted_index"))
+    if abstract:
+        record["abstract"] = abstract
+        searchable = "{} {} {}".format(
+            record.get("title", ""), abstract, record.get("journal", "")
+        )
+        record["metrics"] = extract_reported_metrics(searchable)
+    record["openalex_id"] = payload.get("id")
+    record["openalex_cited_by_count"] = payload.get("cited_by_count")
+    record["openalex_topics"] = [
+        topic.get("display_name")
+        for topic in payload.get("topics", [])[:10]
+        if topic.get("display_name")
+    ]
+    record["metadata_sources"] = ["Crossref", "OpenAlex"]
+    return record
+
+
 def _clean_markup(value: str) -> str:
     value = re.sub(r"<[^>]+>", " ", value or "")
     return " ".join(html.unescape(value).split())
@@ -155,7 +190,9 @@ def extract_reported_metrics(text: str) -> dict:
     }
 
 
-def _record_from_item(item: dict, profile: ResearchProfile) -> Optional[dict]:
+def _record_from_item(
+    item: dict, profile: ResearchProfile, research_roles=None
+) -> Optional[dict]:
     if item.get("type") != "journal-article" or not item.get("DOI"):
         return None
     title = str(_first(item.get("title")))
@@ -186,6 +223,7 @@ def _record_from_item(item: dict, profile: ResearchProfile) -> Optional[dict]:
         "condition_matches": matches,
         "matched_condition_count": matched,
         "match_level": "direct" if direct else "context_only",
+        "research_roles": sorted(set(research_roles or ["benchmark"])),
     }
 
 
@@ -198,6 +236,20 @@ def _search_url(profile: ResearchProfile, rows: int) -> str:
         profile.test_current,
         profile.temperature,
         "electrochemical performance capacity",
+    ]
+    params = {
+        "query.bibliographic": " ".join(term for term in terms if term.strip()),
+        "filter": "type:journal-article",
+        "rows": max(1, min(rows, 1000)),
+    }
+    return "{}?{}".format(CROSSREF_WORKS, urlencode(params))
+
+
+def _background_search_url(profile: ResearchProfile, rows: int) -> str:
+    terms = [
+        profile.battery_system,
+        profile.active_material,
+        "review mechanism interface kinetics thermodynamics degradation",
     ]
     params = {
         "query.bibliographic": " ".join(term for term in terms if term.strip()),
@@ -232,22 +284,48 @@ def search_crossref(
         }
 
     getter = fetch_json or _fetch_json
-    response = getter(_search_url(profile, max(max_results * 2, 50)))
-    items = response.get("message", {}).get("items", [])
+    query_rows = max(max_results * 2, 50)
+    query_urls = {
+        "benchmark": _search_url(profile, query_rows),
+        "background": _background_search_url(profile, query_rows),
+    }
+    role_dois = {"benchmark": [], "background": []}
+    candidate_roles = {}
+    for role, url in query_urls.items():
+        response = getter(url)
+        for item in response.get("message", {}).get("items", []):
+            doi = str(item.get("DOI", "")).strip().lower()
+            if item.get("type") != "journal-article" or not doi:
+                continue
+            candidate_roles.setdefault(doi, set()).add(role)
+            if doi not in role_dois[role]:
+                role_dois[role].append(doi)
+
     dois = []
-    seen = set()
-    for item in items:
-        doi = str(item.get("DOI", "")).strip().lower()
-        if item.get("type") == "journal-article" and doi and doi not in seen:
-            seen.add(doi)
-            dois.append(doi)
+    longest = max((len(values) for values in role_dois.values()), default=0)
+    for index in range(longest):
+        for role in ("benchmark", "background"):
+            values = role_dois[role]
+            if index < len(values) and values[index] not in dois:
+                dois.append(values[index])
+                if len(dois) >= max_results:
+                    break
         if len(dois) >= max_results:
             break
 
     def verify(doi):
         try:
             payload = getter("{}/{}".format(CROSSREF_WORKS, quote(doi, safe="")))
-            return _record_from_item(payload.get("message", {}), profile)
+            record = _record_from_item(
+                payload.get("message", {}), profile, candidate_roles.get(doi, set())
+            )
+            if fetch_json is None and record and not record.get("abstract"):
+                try:
+                    record = _enrich_from_openalex(record, getter)
+                except Exception:
+                    record["metadata_sources"] = ["Crossref"]
+                    record["openalex_enrichment_failed"] = True
+            return record
         except Exception:
             return None
 
@@ -276,6 +354,8 @@ def search_crossref(
         "source": "Crossref REST API",
         "searched_at": datetime.now(timezone.utc).isoformat(),
         "query": profile.to_dict(),
+        "search_queries": query_urls,
+        "search_strategy": ["direct_performance_benchmark", "background_mechanism_and_physical_chemistry"],
         "missing_conditions": [],
         "candidate_count": len(dois),
         "verified_count": len(records),
@@ -283,7 +363,8 @@ def search_crossref(
         "records": records,
         "limitations": [
             "仅保留经 Crossref 单篇接口复核的 DOI 期刊论文。",
-            "Crossref 元数据不提供期刊影响因子；引用次数仅用于排序，不代表研究质量。",
+            "Crossref 缺少摘要时尝试用 OpenAlex DOI 记录补全摘要和主题；OpenAlex 不替代 DOI 核验。",
+            "Crossref/OpenAlex 元数据不提供期刊影响因子；引用次数仅用于排序，不代表研究质量。",
             "性能数值只从题名/摘要显式表达中提取，正文未公开时不推断测试条件。",
             "只有全部实验条件在元数据中明确匹配的记录才标记为直接可比。",
         ],

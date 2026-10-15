@@ -27,6 +27,7 @@ $AllowedFiles = @(
     'SECURITY.md',
     'VERSION',
     'CHANGELOG.md',
+    'RELEASE_NOTES_v0.5.0-rc1.md',
     'LICENSE.txt'
 )
 $AllowedDirectories = @('src', 'examples', 'tests', '.github')
@@ -63,6 +64,11 @@ New-Item -ItemType Directory -Force $knowledge | Out-Null
 Copy-Item -LiteralPath (Join-Path $Root 'knowledge\base_rules.json') -Destination $knowledge
 [System.IO.File]::WriteAllText(
     (Join-Path $knowledge 'experiences.jsonl'),
+    '',
+    (New-Object System.Text.UTF8Encoding($false))
+)
+[System.IO.File]::WriteAllText(
+    (Join-Path $knowledge 'literature_knowledge.jsonl'),
     '',
     (New-Object System.Text.UTF8Encoding($false))
 )

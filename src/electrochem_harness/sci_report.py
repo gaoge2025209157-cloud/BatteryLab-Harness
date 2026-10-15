@@ -6,6 +6,8 @@ from pathlib import Path
 from statistics import median
 from typing import Optional
 
+from .scientific_guidance import render_scientific_guidance, select_representative_cycles
+
 
 def _number(value, digits=1, missing="—"):
     return missing if value is None else ("{:.{}f}".format(value, digits))
@@ -244,6 +246,7 @@ def render_concise_markdown(
             temperature=temperature or "",
         )
     lines.extend(_render_literature_and_value(payload, research_profile, literature_result))
+    lines.extend(render_scientific_guidance(payload, research_profile, literature_result))
     lines.extend(
         [
             "",
@@ -265,6 +268,7 @@ def create_scientific_bundle(
     research_profile=None,
     search_literature=False,
     max_literature=50,
+    literature_knowledge_path=None,
 ):
     from .land_curve import (
         _decode,
@@ -304,6 +308,19 @@ def create_scientific_bundle(
                 "limitations": ["联网检索失败；未生成文献水平结论。"],
             }
         payload["literature_search"] = literature_result
+
+    if literature_knowledge_path is not None:
+        from .literature_knowledge import LiteratureKnowledgeStore
+
+        knowledge_store = LiteratureKnowledgeStore(literature_knowledge_path)
+        update_result = None
+        if literature_result is not None and not literature_result.get("error"):
+            update_result = knowledge_store.update_from_search(
+                research_profile, literature_result
+            )
+        payload["literature_knowledge"] = knowledge_store.summary(
+            research_profile, update_result=update_result
+        )
 
     report_path = target / "关键参数报告.md"
     report_path.write_text(
@@ -367,11 +384,7 @@ def create_scientific_bundle(
     segments.append(points[start:])
 
     complete_cycles = [item for item in payload["report"]["cycles"] if item["complete"]]
-    if len(complete_cycles) <= 4:
-        selected = complete_cycles
-    else:
-        indexes = sorted({0, 1, len(complete_cycles) // 2, len(complete_cycles) - 1})
-        selected = [complete_cycles[index] for index in indexes]
+    selected = select_representative_cycles(complete_cycles, limit=8)
     curves_path = target / "Origin_充放电曲线数据.csv"
     with curves_path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.writer(handle)
@@ -392,6 +405,8 @@ def create_scientific_bundle(
         "curve_png": str(target / "充放电曲线.png"),
         "cycling_png": str(target / "循环性能.png"),
         "status_path": str(status_path),
+        "selected_cycles": [item["cycle"] for item in selected],
+        "representative_cycle_limit": 8,
     }
     job_path.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
     result_paths = {
