@@ -1,8 +1,10 @@
-# ElectrochemHarness v0.5.0-rc1
+# ElectrochemHarness v0.6.0-rc1
 
 > **一句话说明：** 选择蓝电导出文件后，程序在本机完成数据检查、关键参数计算、报告生成和可选Origin绘图；Phase 1演示模式还会在执行前展示计划并要求人工批准。
 
-本版本是供团队演示和试用的候选版。普通分析入口保持可用；Phase 1受控演示已接入GUI，但Origin独立白名单适配器仍待完成，因此Phase 1演示中启用Origin会明确降级并保留本地报告。
+本版本是供团队演示和试用的候选版。普通分析入口保持可用；Phase 1受控演示已接入GUI。Phase 2已加入版本化科学口径、独立标准答案评测和多平行电池统计，但标准答案仍为`draft`，须经J/C共同复核后才能通过科学发布门。Origin独立白名单适配器仍待完成，因此Phase 1演示中启用Origin会明确降级并保留本地报告。
+
+团队后续开发已拆为“科学验收/证据/推理”和“生产GUI/Origin/系统评测”两个工作包，详见 `TEAM_WORK_PACKAGES.md`。
 
 ## 运行条件
 
@@ -105,11 +107,42 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\run_sci_origin.ps1' `
   -SkipOrigin
 ```
 
+## Phase 2科学验证与多电池统计
+
+验证当前冻结公式和仓库标准答案：
+
+```powershell
+py -3 '.\run_phase2_validation.py' --output '.\phase2_validation.json'
+```
+
+数值通过后仍须查看`scientific_release_ready`：当前标准答案为`draft`，J/C未共同复核前必须为`false`。
+
+多平行电池分析时，将`examples\replicate_manifest_template.json`复制到数据目录，填写至少3个同条件独立电池后运行：
+
+```powershell
+py -3 '.\run_replicates.py' '.\replicate_manifest.json' `
+  --output-dir '.\replicate_results'
+```
+
+结果保留全部原始散点，并给出均值、样本标准差、SEM和95% Student t区间，同时生成放电比容量原始散点与均值±样本标准差的SVG快速质控图；异常提示不会自动删除样本。
+
+## 可编辑文献知识
+
+启用文献检索后，程序会把核验过 DOI 的文献摘要知识按 DOI 去重保存到：
+
+```text
+knowledge/literature_knowledge.md
+```
+
+可在主界面点击“编辑文献知识库”。新内容默认标记为 `candidate`；核对论文正文后，将状态改为 `approved`，并填写“人工确认知识”和正文页码/图号。以后只有与当前实验条件匹配的 `approved` 条目会成为报告判断依据，人工内容不会被自动更新覆盖。
+
 ## 输出文件
 
 - `关键参数报告.md`：比容量、库仑效率、保持率、电压平台、结论和价值判断；
 - `关键参数.csv`：循环参数；
-- `完整分析.json`：完整审计结果；
+- `完整分析.json`：完整分析结果及科学标准身份；
+- `科学计算标准.json`：本次计算公式、约定、版本和SHA-256；
+- `平行电池统计.json/.csv/.md`、`平行电池统计图.svg`：多电池原始散点、离散度、置信区间和快速质控图；
 - `文献证据.json`与`文献比较.csv`：DOI核验和文献对照；
 - `Origin_充放电曲线数据.csv`：Origin绘图输入；
 - `电化学分析.opju`、`充放电曲线.png`、`循环性能.png`：启用Origin时生成；

@@ -33,8 +33,14 @@ def main(argv=None):
     parser.add_argument(
         "--literature-knowledge",
         type=Path,
-        default=ROOT / "knowledge" / "literature_knowledge.jsonl",
-        help="Append-only DOI-verified project knowledge store",
+        default=None,
+        help="Optional legacy append-only DOI audit store (not used as the editable judgment basis)",
+    )
+    parser.add_argument(
+        "--knowledge-markdown",
+        type=Path,
+        default=ROOT / "knowledge" / "literature_knowledge.md",
+        help="Human-editable DOI knowledge used by later analyses after approval",
     )
     parser.add_argument("--battery-system")
     parser.add_argument("--active-material")
@@ -63,6 +69,7 @@ def main(argv=None):
         search_literature=args.search_literature or args.guided,
         max_literature=max(1, min(args.max_literature, 200)),
         literature_knowledge_path=args.literature_knowledge,
+        literature_markdown_path=args.knowledge_markdown,
     )
     for name, path in paths.items():
         print("{}={}".format(name, path))

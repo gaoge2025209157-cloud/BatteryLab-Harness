@@ -7,6 +7,10 @@ from statistics import median
 from typing import Optional
 
 from .scientific_guidance import render_scientific_guidance, select_representative_cycles
+from .scientific_standard import (
+    scientific_standard_identity,
+    scientific_standard_manifest,
+)
 
 
 def _number(value, digits=1, missing="—"):
@@ -247,6 +251,20 @@ def render_concise_markdown(
         )
     lines.extend(_render_literature_and_value(payload, research_profile, literature_result))
     lines.extend(render_scientific_guidance(payload, research_profile, literature_result))
+    standard = payload.get("scientific_standard", scientific_standard_identity())
+    lines.extend(
+        [
+            "",
+            "## 科学计算口径与统计边界",
+            "",
+            "- 核心指标标准版本：**{}**；标准SHA-256：`{}`。".format(
+                standard["version"], standard["sha256"]
+            ),
+            "- 本报告来自单个电池，只能作为**探索性结果**，不能证明材料重复性、批次稳定性或总体性能。",
+            "- 重复性结论至少需要3个同条件独立电池，并同时展示原始散点、均值、样本标准差和95%置信区间。",
+            "- 统计异常只作提示，不自动删除；任何人工排除必须记录事前规则和理由。",
+        ]
+    )
     lines.extend(
         [
             "",
@@ -269,6 +287,7 @@ def create_scientific_bundle(
     search_literature=False,
     max_literature=50,
     literature_knowledge_path=None,
+    literature_markdown_path=None,
 ):
     from .land_curve import (
         _decode,
@@ -282,6 +301,7 @@ def create_scientific_bundle(
     target = Path(output_dir).resolve()
     target.mkdir(parents=True, exist_ok=True)
     payload = analyze_land_capacity_curve(source)
+    payload["scientific_standard"] = scientific_standard_identity()
     if research_profile is None:
         research_profile = ResearchProfile(
             active_material=material or "",
@@ -320,6 +340,19 @@ def create_scientific_bundle(
             )
         payload["literature_knowledge"] = knowledge_store.summary(
             research_profile, update_result=update_result
+        )
+
+    if literature_markdown_path is not None:
+        from .markdown_knowledge import MarkdownLiteratureKnowledgeStore
+
+        markdown_store = MarkdownLiteratureKnowledgeStore(literature_markdown_path)
+        markdown_update = None
+        if literature_result is not None and not literature_result.get("error"):
+            markdown_update = markdown_store.update_from_search(
+                research_profile, literature_result
+            )
+        payload["editable_literature_knowledge"] = markdown_store.summary(
+            research_profile, update_result=markdown_update
         )
 
     report_path = target / "关键参数报告.md"
@@ -394,6 +427,18 @@ def create_scientific_bundle(
                 for _, capacity, voltage in segments[segment_number - 1]:
                     writer.writerow([item["cycle"], direction, capacity, voltage])
 
+    standard_path = target / "科学计算标准.json"
+    standard_path.write_text(
+        json.dumps(
+            {
+                "identity": scientific_standard_identity(),
+                "manifest": scientific_standard_manifest(),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     json_path = target / "完整分析.json"
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     job_path = target / "origin_job.json"
@@ -414,9 +459,12 @@ def create_scientific_bundle(
         "summary": summary_path,
         "curves": curves_path,
         "json": json_path,
+        "standard": standard_path,
         "job": job_path,
         "status": status_path,
     }
+    if literature_markdown_path is not None:
+        result_paths["knowledge_markdown"] = Path(literature_markdown_path).resolve()
     if literature_result is not None:
         literature_path = target / "文献证据.json"
         literature_path.write_text(json.dumps(literature_result, ensure_ascii=False, indent=2), encoding="utf-8")

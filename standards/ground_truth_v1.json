@@ -1,0 +1,47 @@
+{
+  "suite_id": "phase2-core-v1",
+  "standard_version": "1.0.0",
+  "standard_hash": "a910b44758a7a7431061da68bdbb13253118181412ea1eb8509ac282a716aa58",
+  "review_status": "draft",
+  "reviewers": [],
+  "cases": [
+    {
+      "case_id": "GT-RAW-01",
+      "description": "1 mA到-1 mA在2 h内线性跨零，恒定3 V；独立解析积分。",
+      "input_file": "data/gt_raw_sign_crossing.csv",
+      "input_mode": "raw_current",
+      "parameters": {"active_mass_mg": 10.0},
+      "expected": {
+        "cycle_1.charge_capacity_mAh": {"value": 0.5, "absolute_tolerance": 1e-12},
+        "cycle_1.discharge_capacity_mAh": {"value": 0.5, "absolute_tolerance": 1e-12},
+        "cycle_1.charge_energy_mWh": {"value": 1.5, "absolute_tolerance": 1e-12},
+        "cycle_1.discharge_energy_mWh": {"value": 1.5, "absolute_tolerance": 1e-12},
+        "cycle_1.specific_charge_capacity_mAh_g": {"value": 50.0, "absolute_tolerance": 1e-10},
+        "cycle_1.specific_discharge_capacity_mAh_g": {"value": 50.0, "absolute_tolerance": 1e-10},
+        "cycle_1.coulombic_efficiency": {"value": 1.0, "absolute_tolerance": 1e-12},
+        "cycle_1.capacity_retention": {"value": 1.0, "absolute_tolerance": 1e-12},
+        "cycle_1.average_charge_voltage_V": {"value": 3.0, "absolute_tolerance": 1e-12},
+        "cycle_1.average_discharge_voltage_V": {"value": 3.0, "absolute_tolerance": 1e-12},
+        "cycle_1.voltage_gap_V": {"value": 0.0, "absolute_tolerance": 1e-12}
+      }
+    },
+    {
+      "case_id": "GT-CURVE-01",
+      "description": "单一10 mAh/g充放电段，电压线性1到2 V；独立容量加权结果。",
+      "input_file": "data/gt_capacity_plateau.csv",
+      "input_mode": "specific_capacity_curve",
+      "expected": {
+        "cycle_1.charge_specific_capacity_mAh_g": {"value": 10.0, "absolute_tolerance": 1e-12},
+        "cycle_1.discharge_specific_capacity_mAh_g": {"value": 10.0, "absolute_tolerance": 1e-12},
+        "cycle_1.coulombic_efficiency": {"value": 1.0, "absolute_tolerance": 1e-12},
+        "cycle_1.capacity_retention": {"value": 1.0, "absolute_tolerance": 1e-12},
+        "cycle_1.average_charge_voltage_V": {"value": 1.5, "absolute_tolerance": 1e-12},
+        "cycle_1.average_discharge_voltage_V": {"value": 1.5, "absolute_tolerance": 1e-12},
+        "cycle_1.charge_plateau_voltage_V": {"value": 1.5, "absolute_tolerance": 1e-12},
+        "cycle_1.discharge_plateau_voltage_V": {"value": 1.5, "absolute_tolerance": 1e-12},
+        "cycle_1.charge_plateau_capacity_fraction": {"value": 1.0, "absolute_tolerance": 1e-12},
+        "cycle_1.discharge_plateau_capacity_fraction": {"value": 1.0, "absolute_tolerance": 1e-12}
+      }
+    }
+  ]
+}

@@ -325,7 +325,7 @@ class ElectrochemApp:
         self.root.after(100, self._poll_events)
 
     def _configure_window(self):
-        self.root.title("ElectrochemHarness v0.5.0-rc1 — 电化学数据分析")
+        self.root.title("ElectrochemHarness v0.6.0-rc1 — 电化学数据分析")
         self.root.geometry("980x820")
         self.root.minsize(820, 680)
         style = ttk.Style(self.root)
@@ -414,7 +414,7 @@ class ElectrochemApp:
 
         controls = ttk.Frame(outer)
         controls.grid(row=4, column=0, sticky="ew", pady=(10, 0))
-        controls.columnconfigure(5, weight=1)
+        controls.columnconfigure(6, weight=1)
         self.check_button = ttk.Button(controls, text="检查环境", command=self.check_environment)
         self.check_button.grid(row=0, column=0, padx=(0, 6))
         self.run_button = ttk.Button(controls, text="开始分析", command=self.run_analysis)
@@ -425,9 +425,13 @@ class ElectrochemApp:
         self.cancel_button.grid(row=0, column=3, padx=6)
         self.open_button = ttk.Button(controls, text="打开结果目录", command=self.open_output)
         self.open_button.grid(row=0, column=4, padx=6)
-        self.progress = ttk.Progressbar(controls, mode="indeterminate", length=150)
-        self.progress.grid(row=0, column=5, sticky="e", padx=(12, 8))
-        ttk.Label(controls, textvariable=self.status).grid(row=0, column=6, sticky="e")
+        self.knowledge_button = ttk.Button(
+            controls, text="编辑文献知识库", command=self.open_knowledge
+        )
+        self.knowledge_button.grid(row=0, column=5, padx=6)
+        self.progress = ttk.Progressbar(controls, mode="indeterminate", length=120)
+        self.progress.grid(row=0, column=6, sticky="e", padx=(12, 8))
+        ttk.Label(controls, textvariable=self.status).grid(row=0, column=7, sticky="e")
 
     def _path_row(self, parent, row, label, variable, callback):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
@@ -609,6 +613,14 @@ class ElectrochemApp:
         if not messagebox.askyesno("取消任务", "确定终止当前任务吗？部分输出文件可能已生成。"):
             return
         self._terminate_process()
+
+    def open_knowledge(self):
+        from .markdown_knowledge import MarkdownLiteratureKnowledgeStore
+
+        target = MarkdownLiteratureKnowledgeStore(
+            self.project_root / "knowledge" / "literature_knowledge.md"
+        ).ensure_exists()
+        os.startfile(str(target.resolve()))
 
     def open_output(self):
         target = self.variables["output_dir"].get().strip()

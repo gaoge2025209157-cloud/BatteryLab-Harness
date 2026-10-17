@@ -1,10 +1,12 @@
-# ElectrochemHarness v0.5.0-rc1
+# ElectrochemHarness v0.6.0-rc1
 
 > **一句话说明：** 把蓝电导出的充放电数据变成“可检查、需批准、可追溯”的分析报告和Origin图，而不是直接让程序在后台黑盒运行。
 
 这是一个Windows本地电化学数据分析工具。普通使用者可以双击打开界面、选择蓝电文件并生成报告；演示人员还可以通过“Phase 1受控演示”展示数据预检查、分析计划、人工批准、工具白名单、失败降级和完整审计记录。
 
-**当前版本是阶段性候选版（RC），适合组内演示和试用，不是最终稳定版。** Phase 1内核和GUI最小演示已经完成；科学标准答案、多电池统计、全文证据和完整生产GUI仍在后续Phase中。
+**当前版本是阶段性候选版（RC），适合组内演示和试用，不是最终稳定版。** Phase 1内核和GUI最小演示已经完成；Phase 2工程层已实现冻结口径、标准答案评测门和多平行电池统计，但标准答案仍待J/C科学复核；全文证据和完整生产GUI仍在后续Phase中。
+
+后续工作已拆成两个可并行领取的 GitHub 工作包，任务边界、建议分支、交付物和验收标准见 `TEAM_WORK_PACKAGES.md`。
 
 ## 最快上手
 
@@ -97,6 +99,26 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\run_sci_origin.ps1' `
   -Guided
 ```
 
+
+## Phase 2：科学正确性与多平行电池
+
+每次单电池分析会额外生成 `科学计算标准.json`，并在报告中记录标准版本、SHA-256和“单电池仅为探索性”的证据边界。运行仓库标准答案：
+
+```powershell
+py -3 '.\run_phase2_validation.py' --output '.\phase2_validation.json'
+```
+
+数值通过不等于科学发布已批准。`standards\ground_truth_v1.json`当前为`draft`；只有J核对数据/仪器口径、C独立核对公式/误差，并共同登记后，`scientific_release_ready`才会变为`true`。
+
+多平行电池统计：复制 `examples\replicate_manifest_template.json` 到数据所在目录，填写同条件的至少3个电池及实验元数据，再运行：
+
+```powershell
+py -3 '.\run_replicates.py' '.\replicate_manifest.json' `
+  --output-dir '.\replicate_results'
+```
+
+输出 `平行电池统计.json`、`平行电池统计.csv`、`平行电池统计报告.md` 和 `平行电池统计图.svg`，包括全部原始散点、均值、样本标准差、SEM、95% Student t区间、MAD异常提示及人工排除理由。SVG直接展示放电比容量原始散点与均值±样本标准差；异常点不会自动删除，1–2个电池只能标记为探索性。
+
 仅生成报告：
 
 ```powershell
@@ -111,11 +133,25 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\run_sci_origin.ps1' `
 
 - `关键参数报告.md`：比容量、库仑效率、保持率、电压平台、结论和价值判断；
 - `关键参数.csv`：循环参数；
-- `完整分析.json`：完整审计结果；
+- `完整分析.json`：完整分析结果及科学标准身份；
+- `科学计算标准.json`：本次计算公式、约定、版本和SHA-256；
+- `平行电池统计.json/.csv/.md`、`平行电池统计图.svg`：多电池原始散点、离散度、置信区间和均值±样本标准差快速质控图；
 - `文献证据.json`与`文献比较.csv`：DOI核验和文献对照；
 - `Origin_充放电曲线数据.csv`：Origin绘图输入；
 - `电化学分析.opju`、`充放电曲线.png`、`循环性能.png`：启用Origin时生成；
 - `origin_status.json`：Origin版本和兼容降级记录。
+
+## 可编辑的文献知识库
+
+每次启用文献检索后，程序会把 DOI 已核验文献的研究定位、明确性能、摘要候选陈述和适用实验条件，按 DOI 去重写入：
+
+```text
+knowledge/literature_knowledge.md
+```
+
+GUI可点击“编辑文献知识库”直接打开。新条目默认是 `candidate`，只用于提出假设；阅读正文后，可把条目状态改为 `approved`，并在“人工确认知识”和“人工备注与正文定位”中填写结论、页码、图号、条件差异或反例。后续分析只采用 **DOI已核验、状态为 `approved`、实验条件指纹匹配** 的知识作为判断依据。
+
+自动提炼区在重复检索时更新；人工确认知识和备注不会被覆盖。本地知识库已被Git忽略，发布包只包含空模板。旧的 `literature_knowledge.jsonl` 不再作为默认判断依据。
 
 ## 文献结论边界
 

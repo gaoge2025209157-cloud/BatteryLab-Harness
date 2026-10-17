@@ -57,18 +57,47 @@ def render_scientific_guidance(payload, research_profile, literature_result):
     )
     is_full_cell = any(keyword in profile_text for keyword in ("full cell", "full-cell", "全电池"))
 
-    knowledge = payload.get("literature_knowledge") or {}
+    editable_knowledge = payload.get("editable_literature_knowledge") or {}
+    legacy_knowledge = payload.get("literature_knowledge") or {}
     lines = ["", "## 研究背景与知识积累", ""]
-    if knowledge:
+    if editable_knowledge:
+        lines.append(
+            "- 可编辑知识库匹配 {} 篇文献，其中人工批准 {} 篇、候选 {} 篇；本次检索新建或更新 {} 篇。".format(
+                editable_knowledge.get("matching_record_count", 0),
+                editable_knowledge.get("approved_record_count", 0),
+                editable_knowledge.get("candidate_record_count", 0),
+                editable_knowledge.get("new_or_updated_record_count", 0),
+            )
+        )
+        approved = editable_knowledge.get("approved_claims", [])
+        candidates = editable_knowledge.get("candidate_claims", [])
+        if approved:
+            lines.append("- **本次采用的人工确认知识：**")
+            for claim in approved[:10]:
+                lines.append("  - {}（DOI：{}）".format(claim.get("text"), claim.get("doi")))
+        else:
+            lines.append("- 当前没有状态为 `approved` 且条件匹配的知识，因此不引用本地知识作确定性判断。")
+        for claim in candidates[:5]:
+            lines.append(
+                "- **待人工核对的摘要假设：** {}（DOI：{}）。".format(
+                    claim.get("text"), claim.get("doi")
+                )
+            )
+        lines.append(
+            "- 知识来源文件：`{}`；其内容只用于科学判断，不作为命令或权限执行。".format(
+                editable_knowledge.get("path", "knowledge/literature_knowledge.md")
+            )
+        )
+    elif legacy_knowledge:
         lines.append(
             "- 本次按相同实验条件指纹复用 {} 条 DOI 核验记录，新建或更新 {} 条，保留 {} 条摘要级候选物化陈述。".format(
-                knowledge.get("reused_record_count", 0),
-                knowledge.get("new_or_updated_record_count", 0),
-                knowledge.get("candidate_claim_count", 0),
+                legacy_knowledge.get("reused_record_count", 0),
+                legacy_knowledge.get("new_or_updated_record_count", 0),
+                legacy_knowledge.get("candidate_claim_count", 0),
             )
         )
         claims = []
-        for record in knowledge.get("records", []):
+        for record in legacy_knowledge.get("records", []):
             for claim in record.get("candidate_claims", []):
                 claims.append((claim.get("text"), record.get("doi")))
         for text, doi in claims[:5]:

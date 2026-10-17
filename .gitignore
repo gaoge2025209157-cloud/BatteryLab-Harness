@@ -20,6 +20,7 @@ origin_job.json
 origin_status.json
 knowledge/experiences.jsonl
 knowledge/literature_knowledge.jsonl
+knowledge/literature_knowledge.md
 
 # Release artifacts are attached to GitHub Releases, not committed
 

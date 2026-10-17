@@ -20,6 +20,30 @@ from .knowledge import ExperienceStore, KnowledgeBase
 from .land import LandImportConfig, LandImportResult, load_land_export
 from .land_curve import analyze_land_capacity_curve
 from .literature import ResearchProfile, collect_research_profile, search_crossref
+from .markdown_knowledge import MarkdownLiteratureKnowledgeStore
+from .ground_truth import (
+    GroundTruthResult,
+    GroundTruthSuite,
+    evaluate_ground_truth,
+    load_ground_truth_suite,
+    run_ground_truth_suite,
+    scientific_release_ready,
+)
+from .replicates import (
+    ReplicateCell,
+    ReplicateGroup,
+    ReplicateResult,
+    analyze_replicates,
+    load_replicate_manifest,
+    run_replicate_manifest,
+    write_replicate_outputs,
+)
+from .scientific_standard import (
+    SCIENTIFIC_STANDARD_VERSION,
+    scientific_standard_hash,
+    scientific_standard_identity,
+    scientific_standard_manifest,
+)
 from .models import AnalysisPlan, ApprovalRecord, ExperimentContext
 from .planning import (
     BlockingPreflightError,
@@ -78,6 +102,7 @@ __all__ = [
     "KnowledgeBase",
     "LandImportConfig",
     "LandImportResult",
+    "MarkdownLiteratureKnowledgeStore",
     "PlanHashMismatch",
     "PlanningError",
     "ResearchProfile",
@@ -106,4 +131,21 @@ __all__ = [
     "validate_approval",
     "validate_run_outputs",
     "verify_plan_hash",
+    "GroundTruthResult",
+    "GroundTruthSuite",
+    "ReplicateCell",
+    "ReplicateGroup",
+    "ReplicateResult",
+    "SCIENTIFIC_STANDARD_VERSION",
+    "analyze_replicates",
+    "evaluate_ground_truth",
+    "load_ground_truth_suite",
+    "load_replicate_manifest",
+    "run_ground_truth_suite",
+    "run_replicate_manifest",
+    "scientific_release_ready",
+    "scientific_standard_hash",
+    "scientific_standard_identity",
+    "scientific_standard_manifest",
+    "write_replicate_outputs",
 ]

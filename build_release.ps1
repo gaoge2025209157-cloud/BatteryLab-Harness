@@ -17,6 +17,8 @@ $AllowedFiles = @(
     'start_gui.cmd',
     'run_land.py',
     'run_demo.py',
+    'run_phase2_validation.py',
+    'run_replicates.py',
     'origin_plot.py',
     'origin_compat.json',
     'ORIGIN_COMPATIBILITY.md',
@@ -27,10 +29,11 @@ $AllowedFiles = @(
     'SECURITY.md',
     'VERSION',
     'CHANGELOG.md',
-    'RELEASE_NOTES_v0.5.0-rc1.md',
+    'RELEASE_NOTES_v0.6.0-rc1.md',
+    'TEAM_WORK_PACKAGES.md',
     'LICENSE.txt'
 )
-$AllowedDirectories = @('src', 'examples', 'tests', '.github')
+$AllowedDirectories = @('src', 'examples', 'standards', 'tests', '.github')
 
 New-Item -ItemType Directory -Force $ReleaseRoot | Out-Null
 if (Test-Path $Stage) { Remove-Item -LiteralPath $Stage -Recurse -Force }
@@ -72,6 +75,9 @@ Copy-Item -LiteralPath (Join-Path $Root 'knowledge\base_rules.json') -Destinatio
     '',
     (New-Object System.Text.UTF8Encoding($false))
 )
+Copy-Item -LiteralPath (
+    Join-Path $Root 'knowledge\literature_knowledge_template.md'
+) -Destination (Join-Path $knowledge 'literature_knowledge.md')
 New-Item -ItemType Directory -Force (Join-Path $Stage 'outputs') | Out-Null
 
 Get-ChildItem -Path $Stage -Directory -Recurse -Filter '__pycache__' -ErrorAction SilentlyContinue |

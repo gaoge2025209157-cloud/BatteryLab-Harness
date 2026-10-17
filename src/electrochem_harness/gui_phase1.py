@@ -22,6 +22,7 @@ from .literature import ResearchProfile, search_crossref
 from .models import AnalysisPlan, ApprovalRecord
 from .planning import build_analysis_plan
 from .sci_report import create_scientific_bundle
+from .scientific_standard import scientific_standard_identity, scientific_standard_manifest
 from .tool_registry import (
     CancellationToken,
     FailurePolicy,
@@ -103,7 +104,9 @@ class Phase1GuiController:
             limitations=("Phase 1 GUI演示版仅用于验证受控执行与审计链。",),
         )
         run_id = "run-{}".format(uuid.uuid4().hex)
-        registry = _production_demo_registry(source, values, analysis_payload)
+        registry = _production_demo_registry(
+            source, values, analysis_payload, self.project_root
+        )
         controlled = ControlledAnalysisRun(
             plan,
             registry,
@@ -258,9 +261,15 @@ def _form_fingerprint(values: Mapping[str, Any], source: Path) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _production_demo_registry(source: Path, values: Mapping[str, Any], analysis_payload: Any):
+def _production_demo_registry(
+    source: Path,
+    values: Mapping[str, Any],
+    analysis_payload: Any,
+    project_root: Path,
+):
     registry = ToolRegistry()
     profile = ResearchProfile(**_metadata(values))
+    knowledge_markdown = Path(project_root) / "knowledge" / "literature_knowledge.md"
 
     def parse_tool(context):
         context.checkpoint()
@@ -280,11 +289,18 @@ def _production_demo_registry(source: Path, values: Mapping[str, Any], analysis_
 
     def metrics_tool(context):
         if isinstance(analysis_payload, dict) and analysis_payload.get("mode") == "raw_current_curve":
-            return {"cycles": [item.to_dict() for item in analysis_payload["metrics"]]}
-        return {"cycles": list(analysis_payload["report"].get("cycles", ())) }
+            cycles = [item.to_dict() for item in analysis_payload["metrics"]]
+        else:
+            cycles = list(analysis_payload["report"].get("cycles", ()))
+        return {"scientific_standard": scientific_standard_identity(), "cycles": cycles}
 
     def literature_tool(context):
+        from .markdown_knowledge import MarkdownLiteratureKnowledgeStore
+
         result = search_crossref(profile, max_results=max(1, min(int(values.get("max_literature", 50)), 200)))
+        knowledge_update = MarkdownLiteratureKnowledgeStore(
+            knowledge_markdown
+        ).update_from_search(profile, result)
         evidence = context.output_dir / "文献证据.json"
         comparison = context.output_dir / "文献比较.csv"
         evidence.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -293,7 +309,13 @@ def _production_demo_registry(source: Path, values: Mapping[str, Any], analysis_
             writer.writerow(["match_level", "year", "journal", "title", "doi"])
             for item in result.get("records", ()):
                 writer.writerow([item.get(name) for name in ("match_level", "year", "journal", "title", "doi")])
-        return ToolOutcome(value={"verified_count": result.get("verified_count", 0)}, artifacts=(evidence, comparison))
+        return ToolOutcome(
+            value={
+                "verified_count": result.get("verified_count", 0),
+                "knowledge_update": knowledge_update,
+            },
+            artifacts=(evidence, comparison),
+        )
 
     def report_tool(context):
         if isinstance(analysis_payload, dict) and analysis_payload.get("mode") == "raw_current_curve":
@@ -309,8 +331,13 @@ def _production_demo_registry(source: Path, values: Mapping[str, Any], analysis_
                 research_profile=profile,
                 search_literature=False,
                 literature_knowledge_path=None,
+                literature_markdown_path=knowledge_markdown,
             )
-            artifacts = tuple(path for path in paths.values() if Path(path).is_file())
+            artifacts = tuple(
+                path
+                for name, path in paths.items()
+                if name != "knowledge_markdown" and Path(path).is_file()
+            )
         report = context.output_dir / "关键参数报告.md"
         if "search_literature_metadata" in context.shared:
             with report.open("a", encoding="utf-8") as handle:
@@ -354,8 +381,15 @@ def _write_raw_bundle(target: Path, source: Path, payload: Mapping[str, Any], pr
         "# Phase 1受控分析报告\n\n"
         "- 输入：{}\n"
         "- 模式：四列时间/电流/电压积分\n"
-        "- 循环数：{}\n\n"
-        "> 本报告用于演示计划、批准、白名单、验证和审计链。\n".format(source.name, len(metrics)),
+        "- 循环数：{}\n"
+        "- 科学标准：{}（SHA-256 `{}`）\n"
+        "- 统计边界：单个电池只能作为探索性结果，不能证明重复性。\n\n"
+        "> 本报告用于演示计划、批准、白名单、验证和审计链。\n".format(
+            source.name,
+            len(metrics),
+            scientific_standard_identity()["version"],
+            scientific_standard_identity()["sha256"],
+        ),
         encoding="utf-8",
     )
     summary = target / "关键参数.csv"
@@ -366,7 +400,27 @@ def _write_raw_bundle(target: Path, source: Path, payload: Mapping[str, Any], pr
         writer.writerows(metrics)
     complete = target / "完整分析.json"
     complete.write_text(
-        json.dumps({"experiment_context": profile.to_dict(), "metrics": metrics}, ensure_ascii=False, indent=2),
+        json.dumps(
+            {
+                "experiment_context": profile.to_dict(),
+                "scientific_standard": scientific_standard_identity(),
+                "metrics": metrics,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    standard = target / "科学计算标准.json"
+    standard.write_text(
+        json.dumps(
+            {
+                "identity": scientific_standard_identity(),
+                "manifest": scientific_standard_manifest(),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     curves = target / "Origin_充放电曲线数据.csv"
@@ -380,4 +434,4 @@ def _write_raw_bundle(target: Path, source: Path, payload: Mapping[str, Any], pr
         json.dumps({"curves_csv": str(curves), "status": "phase1_demo"}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    return report, summary, complete, curves, job
+    return report, summary, complete, standard, curves, job
