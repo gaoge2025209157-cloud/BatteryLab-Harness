@@ -67,6 +67,57 @@ SCOPE_LABELS = {
     "formal_output": "正式输出（写入产物文件）",
 }
 
+UNKNOWN_VALUES = {"", "待填", "未知", "unknown", "n/a", "na", "???"}
+
+METADATA_FIELDS = (
+    ("battery_system", "电池体系", "例如：锂硫电池 / lithium-sulfur battery"),
+    ("active_material", "活性物质", "例如：S/C复合正极、LiFePO4"),
+    ("cell_type", "电池类型", "例如：半电池、全电池、对称电池"),
+    ("counter_electrode", "对电极/另一电极", "例如：Li、Na、NMC811"),
+    ("test_current", "测试电流/倍率", "例如：100 mA g-1、0.1 C"),
+    ("temperature", "测试温度", "例如：25 C、60 C"),
+    ("normalization_basis", "质量归一化口径", "例如：硫质量、正极活性物质质量"),
+)
+
+SUPPORTED_EXTENSIONS = {".csv", ".txt", ".tsv", ".dat"}
+
+
+def _missing(value: Any) -> bool:
+    return str(value or "").strip().casefold() in UNKNOWN_VALUES
+
+
+def validate_form(values: Mapping[str, Any]) -> Tuple[str, ...]:
+    """Shared, display-free form validation.
+
+    It lives here rather than in the Tk module so the headless evaluation path
+    and the GUI enforce exactly the same rules; previously only the dialog
+    checked the form, so a scripted run could plan a literature search with
+    every search field blank.
+    """
+
+    errors = []
+    source_text = str(values.get("input_file", "")).strip()
+    if not source_text or not Path(source_text).is_file():
+        errors.append("请选择存在的蓝电输入文件。")
+    elif Path(source_text).suffix.lower() not in SUPPORTED_EXTENSIONS:
+        errors.append("输入文件必须是 CSV、TXT、TSV 或 DAT 文本导出。")
+    if not str(values.get("output_dir", "")).strip():
+        errors.append("请选择输出目录。")
+    if values.get("search_literature"):
+        for name, label, _hint in METADATA_FIELDS:
+            if _missing(values.get(name)):
+                errors.append("启用文献检索时必须填写：{}。".format(label))
+    try:
+        maximum = int(values.get("max_literature", 50))
+        if maximum < 1 or maximum > 200:
+            raise ValueError
+    except (TypeError, ValueError):
+        errors.append("候选 DOI 数量必须是 1–200 的整数。")
+    origin_exe = str(values.get("origin_exe", "")).strip()
+    if values.get("use_origin") and origin_exe and not Path(origin_exe).is_file():
+        errors.append("指定的 Origin64.exe 不存在；可清空该项让程序自动查找。")
+    return tuple(errors)
+
 
 @dataclass(frozen=True)
 class PreflightView:
@@ -226,6 +277,9 @@ class SixStepWizard:
     def run_preflight(self) -> PreflightView:
         if self._values is None:
             raise WizardError("请先填写第 1 步的数据与实验条件。")
+        errors = validate_form(self._values)
+        if errors:
+            raise WizardError("；".join(errors))
         try:
             prepared = self._controller.prepare(self._values)
         except ValueError as error:

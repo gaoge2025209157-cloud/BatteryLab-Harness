@@ -19,6 +19,7 @@ $AllowedFiles = @(
     'run_demo.py',
     'run_phase2_validation.py',
     'run_replicates.py',
+    'run_evaluation.py',
     'origin_plot.py',
     'origin_compat.json',
     'ORIGIN_COMPATIBILITY.md',

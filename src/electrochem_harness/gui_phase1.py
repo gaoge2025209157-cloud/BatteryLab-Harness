@@ -216,12 +216,30 @@ def _preflight(source: Path):
             imported = load_land_export(source)
             metrics = analyze_cycles(imported.points)
         except (OSError, UnicodeError, ValueError) as raw_error:
+            # 四列模式解析成功但数值检查失败时，必须给出可操作的原因，
+            # 否则"时间倒退"会被误报成"格式无法识别"，用户不知道该改什么。
+            translated = _translate_raw_failure(raw_error, curve_error)
+            if translated is not None:
+                return {"mode": "unknown", "rows": 0}, None, (translated,)
             message = "无法识别为三列容量曲线或四列原始数据：{}；{}".format(
                 curve_error, raw_error
             )
             issue = {"code": "unrecognized_land_format", "message": message, "blocking": True}
             return {"mode": "unknown", "rows": 0}, None, (issue,)
         issues = []
+        # 四列模式没有内建的质检，这里补上"某圈缺放电段"的提示：
+        # 否则末圈不完整会被算成放电容量 0 而没有任何说明。
+        for item in metrics:
+            if item.charge_capacity_mAh > 0 and item.discharge_capacity_mAh == 0:
+                issues.append(
+                    {
+                        "code": "incomplete_cycle",
+                        "message": "第 {} 圈只有充电段、没有放电段；该圈的库仑效率与容量保持率不可用。".format(
+                            item.cycle
+                        ),
+                        "blocking": False,
+                    }
+                )
         summary = {
             "mode": "raw_current_curve",
             "rows": len(imported.points),
@@ -232,6 +250,7 @@ def _preflight(source: Path):
         payload = {"mode": "raw_current_curve", "imported": imported, "metrics": metrics}
         return summary, payload, tuple(issues)
 
+    # 三列比容量曲线：直接使用导出的比容量，不做电流积分
     report = payload.get("report", {})
     issues = tuple(report.get("quality_issues", ()))
     summary = {
@@ -242,6 +261,25 @@ def _preflight(source: Path):
         "columns": payload.get("import_metadata", {}).get("detected_columns", {}),
     }
     return summary, payload, issues
+
+
+def _translate_raw_failure(raw_error: Exception, curve_error: Exception):
+    """Map a numeric failure on parsed four-column data to a blocking quality issue."""
+
+    text = str(raw_error).lower()
+    if "time_s must increase" in text:
+        return {
+            "code": "non_monotonic_time",
+            "message": "时间列不是严格递增（存在倒退或重复），无法对电流做积分；请检查导出或排序后重试。",
+            "blocking": True,
+        }
+    if "non-finite" in text:
+        return {
+            "code": "non_finite_value",
+            "message": "存在 NaN 或无穷大数值，无法计算容量；请检查原始导出。",
+            "blocking": True,
+        }
+    return None
 
 
 def _metadata(values: Mapping[str, Any]):

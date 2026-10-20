@@ -263,7 +263,9 @@ def build_production_registry(inputs: ToolchainInputs) -> ToolRegistry:
                     "\n## Phase 1文献执行记录\n\n"
                     "已在独立联网授权范围内完成文献元数据检索，详情见 `文献证据.json`。\n"
                 )
-        return ToolOutcome(value={"report": str(report)}, artifacts=tuple(artifacts))
+        # 只回传文件名：核心结果哈希必须与 run 目录无关，否则同输入两次运行
+        # 会得到不同的哈希，可复现性检查就失效了（见 E-12）。
+        return ToolOutcome(value={"report": report.name}, artifacts=tuple(artifacts))
 
     def origin_tool(context):
         context.checkpoint()
@@ -300,7 +302,10 @@ def build_production_registry(inputs: ToolchainInputs) -> ToolRegistry:
             value={
                 "origin_release": status.origin_release,
                 "originpro_version": status.originpro_version,
-                "project": status.project,
+                # 同上：不要回传绝对路径，保持核心结果哈希可复现
+                "project": (
+                    None if not status.project else Path(status.project).name
+                ),
                 "compatibility_warnings": list(status.warnings),
             },
             artifacts=artifacts,
