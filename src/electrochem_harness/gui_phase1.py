@@ -5,7 +5,6 @@ preflight and real local report generation, while optional external adapters
 remain independently authorized and degradable.
 """
 
-import csv
 import hashlib
 import json
 import uuid
@@ -18,18 +17,10 @@ from .approval import create_approval
 from .controlled_run import ControlledAnalysisRun, ControlledRunResult
 from .land import load_land_export
 from .land_curve import analyze_land_capacity_curve
-from .literature import ResearchProfile, search_crossref
 from .models import AnalysisPlan, ApprovalRecord
 from .planning import build_analysis_plan
-from .sci_report import create_scientific_bundle
-from .scientific_standard import scientific_standard_identity, scientific_standard_manifest
-from .tool_registry import (
-    CancellationToken,
-    FailurePolicy,
-    ToolOutcome,
-    ToolRegistry,
-    ToolSpec,
-)
+from .production_registry import ToolchainInputs, build_production_registry
+from .tool_registry import CancellationToken
 from .validation import hash_file
 from .workflow import ApprovalRequired, WorkflowState
 
@@ -45,10 +36,16 @@ class Phase1Preparation:
 
 
 class Phase1GuiController:
-    """Prepare, approve and execute one GUI-owned controlled analysis."""
+    """Prepare, approve and execute one GUI-owned controlled analysis.
 
-    def __init__(self, project_root: Path):
+    ``origin_launcher`` is injectable so tests (and CI machines without Origin)
+    can exercise both the success and the degradation path without starting a
+    real Origin instance.
+    """
+
+    def __init__(self, project_root: Path, *, origin_launcher=None):
         self.project_root = Path(project_root).resolve()
+        self.origin_launcher = origin_launcher
         self.preparation: Optional[Phase1Preparation] = None
         self.controlled_run: Optional[ControlledAnalysisRun] = None
         self.approval: Optional[ApprovalRecord] = None
@@ -105,7 +102,11 @@ class Phase1GuiController:
         )
         run_id = "run-{}".format(uuid.uuid4().hex)
         registry = _production_demo_registry(
-            source, values, analysis_payload, self.project_root
+            source,
+            values,
+            analysis_payload,
+            self.project_root,
+            origin_launcher=self.origin_launcher,
         )
         controlled = ControlledAnalysisRun(
             plan,
@@ -266,172 +267,22 @@ def _production_demo_registry(
     values: Mapping[str, Any],
     analysis_payload: Any,
     project_root: Path,
+    origin_launcher=None,
 ):
-    registry = ToolRegistry()
-    profile = ResearchProfile(**_metadata(values))
-    knowledge_markdown = Path(project_root) / "knowledge" / "literature_knowledge.md"
+    """Backward-compatible wrapper around the Phase 5 production registry.
 
-    def parse_tool(context):
-        context.checkpoint()
-        if isinstance(analysis_payload, dict) and analysis_payload.get("mode") == "raw_current_curve":
-            imported = analysis_payload["imported"]
-            return {"mode": "raw_current_curve", "rows": len(imported.points), "metadata": imported.metadata()}
-        return {
-            "mode": "specific_capacity_curve",
-            "rows": analysis_payload["report"]["source_rows"],
-            "metadata": analysis_payload["import_metadata"],
-        }
+    Kept so existing callers and tests keep one import path while the declared
+    registry lives in :mod:`electrochem_harness.production_registry`.
+    """
 
-    def quality_tool(context):
-        if isinstance(analysis_payload, dict) and analysis_payload.get("mode") == "raw_current_curve":
-            return {"issues": []}
-        return {"issues": list(analysis_payload["report"].get("quality_issues", ())) }
-
-    def metrics_tool(context):
-        if isinstance(analysis_payload, dict) and analysis_payload.get("mode") == "raw_current_curve":
-            cycles = [item.to_dict() for item in analysis_payload["metrics"]]
-        else:
-            cycles = list(analysis_payload["report"].get("cycles", ()))
-        return {"scientific_standard": scientific_standard_identity(), "cycles": cycles}
-
-    def literature_tool(context):
-        from .markdown_knowledge import MarkdownLiteratureKnowledgeStore
-
-        result = search_crossref(profile, max_results=max(1, min(int(values.get("max_literature", 50)), 200)))
-        knowledge_update = MarkdownLiteratureKnowledgeStore(
-            knowledge_markdown
-        ).update_from_search(profile, result)
-        evidence = context.output_dir / "文献证据.json"
-        comparison = context.output_dir / "文献比较.csv"
-        evidence.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-        with comparison.open("w", encoding="utf-8-sig", newline="") as handle:
-            writer = csv.writer(handle)
-            writer.writerow(["match_level", "year", "journal", "title", "doi"])
-            for item in result.get("records", ()):
-                writer.writerow([item.get(name) for name in ("match_level", "year", "journal", "title", "doi")])
-        return ToolOutcome(
-            value={
-                "verified_count": result.get("verified_count", 0),
-                "knowledge_update": knowledge_update,
-            },
-            artifacts=(evidence, comparison),
-        )
-
-    def report_tool(context):
-        if isinstance(analysis_payload, dict) and analysis_payload.get("mode") == "raw_current_curve":
-            artifacts = _write_raw_bundle(context.output_dir, source, analysis_payload, profile)
-        else:
-            paths = create_scientific_bundle(
-                source,
-                context.output_dir,
-                material=profile.active_material,
-                cell_configuration=profile.cell_description,
-                rate=profile.test_current,
-                temperature=profile.temperature,
-                research_profile=profile,
-                search_literature=False,
-                literature_knowledge_path=None,
-                literature_markdown_path=knowledge_markdown,
-            )
-            artifacts = tuple(
-                path
-                for name, path in paths.items()
-                if name != "knowledge_markdown" and Path(path).is_file()
-            )
-        report = context.output_dir / "关键参数报告.md"
-        if "search_literature_metadata" in context.shared:
-            with report.open("a", encoding="utf-8") as handle:
-                handle.write("\n## Phase 1文献执行记录\n\n已在独立联网授权范围内完成文献元数据检索，详情见 `文献证据.json`。\n")
-        return ToolOutcome(value={"report": str(report)}, artifacts=tuple(artifacts))
-
-    def origin_tool(context):
-        raise RuntimeError("Phase 1 GUI演示版尚未接入独立Origin适配器；本地报告和绘图CSV已保留。")
-
-    registry.register(ToolSpec("parse_land_text", parse_tool))
-    registry.register(ToolSpec("quality_check", quality_tool))
-    registry.register(ToolSpec("calculate_cycle_metrics", metrics_tool))
-    registry.register(
-        ToolSpec(
-            "search_literature_metadata",
-            literature_tool,
-            requires_network=True,
-            writes_output=True,
-            failure_policy=FailurePolicy.DEGRADE,
-            timeout_seconds=120,
+    return build_production_registry(
+        ToolchainInputs(
+            source=Path(source),
+            values=values,
+            analysis_payload=analysis_payload,
+            project_root=Path(project_root),
+            knowledge_markdown=Path(project_root) / "knowledge" / "literature_knowledge.md",
+            origin_launcher=origin_launcher,
+            origin_exe=str(values.get("origin_exe", "")).strip(),
         )
     )
-    registry.register(ToolSpec("build_scientific_report", report_tool, writes_output=True, timeout_seconds=120))
-    registry.register(
-        ToolSpec(
-            "build_origin_project",
-            origin_tool,
-            writes_output=True,
-            failure_policy=FailurePolicy.DEGRADE,
-        )
-    )
-    registry.seal()
-    return registry
-
-
-def _write_raw_bundle(target: Path, source: Path, payload: Mapping[str, Any], profile: ResearchProfile):
-    target.mkdir(parents=True, exist_ok=True)
-    metrics = [item.to_dict() for item in payload["metrics"]]
-    report = target / "关键参数报告.md"
-    report.write_text(
-        "# Phase 1受控分析报告\n\n"
-        "- 输入：{}\n"
-        "- 模式：四列时间/电流/电压积分\n"
-        "- 循环数：{}\n"
-        "- 科学标准：{}（SHA-256 `{}`）\n"
-        "- 统计边界：单个电池只能作为探索性结果，不能证明重复性。\n\n"
-        "> 本报告用于演示计划、批准、白名单、验证和审计链。\n".format(
-            source.name,
-            len(metrics),
-            scientific_standard_identity()["version"],
-            scientific_standard_identity()["sha256"],
-        ),
-        encoding="utf-8",
-    )
-    summary = target / "关键参数.csv"
-    fields = list(metrics[0]) if metrics else ["cycle"]
-    with summary.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(metrics)
-    complete = target / "完整分析.json"
-    complete.write_text(
-        json.dumps(
-            {
-                "experiment_context": profile.to_dict(),
-                "scientific_standard": scientific_standard_identity(),
-                "metrics": metrics,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    standard = target / "科学计算标准.json"
-    standard.write_text(
-        json.dumps(
-            {
-                "identity": scientific_standard_identity(),
-                "manifest": scientific_standard_manifest(),
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    curves = target / "Origin_充放电曲线数据.csv"
-    with curves.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["cycle", "time_s", "current_mA", "voltage_V"])
-        for point in payload["imported"].points:
-            writer.writerow([point.cycle, point.time_s, point.current_mA, point.voltage_V])
-    job = target / "origin_job.json"
-    job.write_text(
-        json.dumps({"curves_csv": str(curves), "status": "phase1_demo"}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    return report, summary, complete, standard, curves, job

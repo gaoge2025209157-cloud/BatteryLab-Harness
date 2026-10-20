@@ -79,6 +79,36 @@ from .workflow import (
     WorkflowStateMachine,
 )
 
+# --- Phase 5: production GUI and Origin tooling -----------------------------
+from .gui_controller import (
+    STEP_TITLES,
+    PreflightView,
+    ResultEntry,
+    ResultView,
+    SixStepWizard,
+    WizardError,
+    WizardStep,
+)
+from .origin_adapter import (
+    OriginError,
+    OriginInstallation,
+    OriginJob,
+    OriginJobError,
+    OriginNotFound,
+    OriginPlotFailed,
+    OriginStatus,
+    find_origin,
+    launch_origin,
+)
+from .production_registry import (
+    NETWORK_ARTIFACTS,
+    ORIGIN_ARTIFACTS,
+    TOOL_ORDER,
+    ToolchainInputs,
+    build_production_registry,
+    tool_declarations,
+)
+
 __all__ = [
     "AnalysisPlan",
     "ApprovalExpired",
@@ -148,4 +178,27 @@ __all__ = [
     "scientific_standard_identity",
     "scientific_standard_manifest",
     "write_replicate_outputs",
+    # Phase 5 additions (append-only block to keep rebases trivial).
+    "NETWORK_ARTIFACTS",
+    "ORIGIN_ARTIFACTS",
+    "OriginError",
+    "OriginInstallation",
+    "OriginJob",
+    "OriginJobError",
+    "OriginNotFound",
+    "OriginPlotFailed",
+    "OriginStatus",
+    "PreflightView",
+    "ResultEntry",
+    "ResultView",
+    "STEP_TITLES",
+    "SixStepWizard",
+    "TOOL_ORDER",
+    "ToolchainInputs",
+    "WizardError",
+    "WizardStep",
+    "build_production_registry",
+    "find_origin",
+    "launch_origin",
+    "tool_declarations",
 ]
