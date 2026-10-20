@@ -164,20 +164,24 @@ class SixStepDialog(tk.Toplevel):
         for page in self.pages.values():
             page.grid(row=0, column=0, sticky="nsew")
 
+        # 状态单独占一行：挤在按钮行里会被窗口边缘截断。
+        self.status = tk.StringVar(value="请确认数据与实验条件")
+        ttk.Label(
+            outer, textvariable=self.status, style="Hint.TLabel", anchor="w"
+        ).grid(row=3, column=0, sticky="ew", pady=(10, 0))
+
         footer = ttk.Frame(outer)
-        footer.grid(row=3, column=0, sticky="ew", pady=(12, 0))
-        footer.columnconfigure(3, weight=1)
+        footer.grid(row=4, column=0, sticky="ew", pady=(6, 0))
+        footer.columnconfigure(2, weight=1)
         self.back_button = ttk.Button(footer, text="上一步", command=self.go_back, state="disabled")
         self.back_button.grid(row=0, column=0, padx=(0, 6))
         self.next_button = ttk.Button(footer, text="下一步", command=self.go_next)
-        self.next_button.grid(row=0, column=1, padx=6)
+        self.next_button.grid(row=0, column=1, padx=(0, 6))
         self.approve_button = ttk.Button(
             footer, text="批准并开始执行", command=self.approve_and_run, state="disabled"
         )
         self.cancel_button = ttk.Button(footer, text="取消执行", command=self.cancel_run, state="disabled")
-        self.cancel_button.grid(row=0, column=2, padx=6)
-        self.status = tk.StringVar(value="请确认数据与实验条件")
-        ttk.Label(footer, textvariable=self.status, style="Hint.TLabel").grid(row=0, column=3, sticky="e", padx=8)
+        self.cancel_button.grid(row=0, column=3, padx=6)
         ttk.Button(footer, text="关闭", command=self._on_close).grid(row=0, column=4, padx=(6, 0))
 
     def _on_inner_configure(self, event=None):
@@ -544,19 +548,22 @@ class SixStepDialog(tk.Toplevel):
             self.cancel_button.configure(state="disabled")
         elif step is WizardStep.PREFLIGHT:
             self.back_button.configure(state=busy_state)
-            blocked = bool(getattr(self, "_blocked", False))
             self.next_button.configure(
-                text="下一步：查看计划", state="disabled" if blocked or self.busy else "normal"
+                text="下一步：查看计划",
+                state="disabled" if self._blocked or self.busy else "normal",
             )
             self.cancel_button.configure(state="disabled")
         elif step is WizardStep.PLAN:
             self.back_button.configure(state=busy_state)
-            self.next_button.configure(text="下一步", state="disabled")
+            # 计划页必须能继续走到第 4 步：这里曾经被误设成 disabled，用户会卡死。
+            self.next_button.configure(
+                text="下一步：确认批准范围", state="disabled" if self.busy else "normal"
+            )
             self.cancel_button.configure(state="disabled")
         elif step is WizardStep.APPROVAL:
             self.back_button.configure(state=busy_state)
             self.next_button.grid_remove()
-            self.approve_button.grid(row=0, column=1, padx=6)
+            self.approve_button.grid(row=0, column=1, padx=(0, 6))
             self.cancel_button.configure(state="disabled")
             self._refresh_approve_button()
         elif step is WizardStep.EXECUTE:

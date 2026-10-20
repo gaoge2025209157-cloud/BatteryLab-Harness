@@ -262,6 +262,65 @@ class SixStepExecutionTests(DialogTestCase):
             self.assertEqual(dialog.step_label.cget("text"), "第 1 / 6 步")
 
 
+class FooterWiringTests(DialogTestCase):
+    """逐页检查"能不能点"——只看方法调用会漏掉按钮被禁用的情况。
+
+    第 3 步曾经把「下一步」设成 disabled，用户直接卡在计划页；
+    这类问题只有真的去 invoke 按钮才会暴露。
+    """
+
+    def test_every_step_exposes_a_clickable_way_forward(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, dialog = self.make(values(SAMPLE, Path(temp) / "out"))
+
+            self.assertEqual(str(dialog.next_button.cget("state")), "normal")
+            self.assertIn("预检查", dialog.next_button.cget("text"))
+            dialog.next_button.invoke()
+            self.assertEqual(dialog.wizard.step, WizardStep.PREFLIGHT)
+
+            self.assertEqual(str(dialog.next_button.cget("state")), "normal")
+            self.assertIn("计划", dialog.next_button.cget("text"))
+            dialog.next_button.invoke()
+            self.assertEqual(dialog.wizard.step, WizardStep.PLAN)
+
+            # 关键回归点：计划页必须能继续走到第 4 步
+            self.assertEqual(str(dialog.next_button.cget("state")), "normal")
+            self.assertIn("批准", dialog.next_button.cget("text"))
+            dialog.next_button.invoke()
+            self.assertEqual(dialog.wizard.step, WizardStep.APPROVAL)
+
+            # 窗口在测试里是 withdraw 状态，ismapped 恒为假，改用布局管理器判断
+            self.assertEqual(dialog.next_button.winfo_manager(), "")
+            self.assertEqual(dialog.approve_button.winfo_manager(), "grid")
+            self.assertEqual(str(dialog.approve_button.cget("state")), "normal")
+
+            dialog.approve_button.invoke()
+            pump(root, dialog)
+            self.assertEqual(dialog.wizard.step, WizardStep.RESULTS)
+
+    def test_blocked_preflight_keeps_the_button_clickable_but_blocked(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root_dir = Path(temp)
+            source = root_dir / "garbage.csv"
+            source.write_text("不是蓝电数据\n", encoding="utf-8")
+            root, dialog = self.make(values(source, root_dir / "out"))
+
+            dialog.next_button.invoke()
+
+            self.assertEqual(dialog.wizard.step, WizardStep.PREFLIGHT)
+            self.assertEqual(str(dialog.next_button.cget("state")), "disabled")
+
+    def test_back_button_is_clickable_after_step_one(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, dialog = self.make(values(SAMPLE, Path(temp) / "out"))
+            self.assertEqual(str(dialog.back_button.cget("state")), "disabled")
+
+            dialog.next_button.invoke()
+            self.assertEqual(str(dialog.back_button.cget("state")), "normal")
+            dialog.back_button.invoke()
+            self.assertEqual(dialog.wizard.step, WizardStep.DATA)
+
+
 class MainWindowEntryTests(unittest.TestCase):
     def test_main_window_exposes_the_six_step_entry(self):
         from electrochem_harness.gui import ElectrochemApp
