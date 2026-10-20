@@ -322,7 +322,8 @@ class ElectrochemApp:
         for variable in self.variables.values():
             variable.trace_add("write", self._notify_phase1_form_changed)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.root.after(100, self._poll_events)
+        self.root.bind("<Destroy>", self._on_root_destroy, add="+")
+        self.poll_id = self.root.after(100, self._poll_events)
 
     def _configure_window(self):
         self.root.title("ElectrochemHarness v0.6.0-rc1 — 电化学数据分析")
@@ -343,7 +344,7 @@ class ElectrochemApp:
         ttk.Label(outer, text="电化学智能实验 Harness", style="Title.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(
             outer,
-            text="本地读取蓝电文本数据；原始文件不会上传。只有实验检索条件会发送到 Crossref。",
+            text="本地读取蓝电文本数据；原始文件不会上传。推荐使用「六步受控分析」：先看计划、再批准、失败可重跑。",
             style="Hint.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(2, 10))
 
@@ -414,24 +415,28 @@ class ElectrochemApp:
 
         controls = ttk.Frame(outer)
         controls.grid(row=4, column=0, sticky="ew", pady=(10, 0))
-        controls.columnconfigure(6, weight=1)
+        controls.columnconfigure(7, weight=1)
+        self.six_step_button = ttk.Button(
+            controls, text="六步受控分析", command=self.open_six_step
+        )
+        self.six_step_button.grid(row=0, column=0, padx=(0, 6))
         self.check_button = ttk.Button(controls, text="检查环境", command=self.check_environment)
-        self.check_button.grid(row=0, column=0, padx=(0, 6))
+        self.check_button.grid(row=0, column=1, padx=6)
         self.run_button = ttk.Button(controls, text="开始分析", command=self.run_analysis)
-        self.run_button.grid(row=0, column=1, padx=6)
+        self.run_button.grid(row=0, column=2, padx=6)
         self.phase1_button = ttk.Button(controls, text="Phase 1受控演示", command=self.open_phase1_demo)
-        self.phase1_button.grid(row=0, column=2, padx=6)
+        self.phase1_button.grid(row=0, column=3, padx=6)
         self.cancel_button = ttk.Button(controls, text="取消任务", command=self.cancel_task, state="disabled")
-        self.cancel_button.grid(row=0, column=3, padx=6)
+        self.cancel_button.grid(row=0, column=4, padx=6)
         self.open_button = ttk.Button(controls, text="打开结果目录", command=self.open_output)
-        self.open_button.grid(row=0, column=4, padx=6)
+        self.open_button.grid(row=0, column=5, padx=6)
         self.knowledge_button = ttk.Button(
             controls, text="编辑文献知识库", command=self.open_knowledge
         )
-        self.knowledge_button.grid(row=0, column=5, padx=6)
+        self.knowledge_button.grid(row=0, column=6, padx=6)
         self.progress = ttk.Progressbar(controls, mode="indeterminate", length=120)
-        self.progress.grid(row=0, column=6, sticky="e", padx=(12, 8))
-        ttk.Label(controls, textvariable=self.status).grid(row=0, column=7, sticky="e")
+        self.progress.grid(row=0, column=7, sticky="e", padx=(12, 8))
+        ttk.Label(controls, textvariable=self.status).grid(row=0, column=8, sticky="e")
 
     def _path_row(self, parent, row, label, variable, callback):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
@@ -568,6 +573,18 @@ class ElectrochemApp:
         command = build_workflow_command(self.project_root, values)
         self._start_command(command, "analysis")
 
+    def open_six_step(self):
+        """Open the production six-step flow with the current form values."""
+
+        from .gui_six_step import SixStepDialog
+
+        dialog = getattr(self, "six_step_dialog", None)
+        if dialog is not None and getattr(dialog, "winfo_exists", lambda: 0)():
+            dialog.lift()
+            dialog.focus_force()
+            return
+        self.six_step_dialog = SixStepDialog(self.root, self.project_root, self._values())
+
     def open_phase1_demo(self):
         dialog = self.phase1_dialog
         if dialog is not None and getattr(dialog, "window", None) is not None:
@@ -629,6 +646,19 @@ class ElectrochemApp:
             return
         os.startfile(str(Path(target).resolve()))
 
+    def _on_root_destroy(self, event=None):
+        if event is None or event.widget is self.root:
+            self._cancel_polling()
+
+    def _cancel_polling(self):
+        poll_id = getattr(self, "poll_id", None)
+        if poll_id is not None:
+            try:
+                self.root.after_cancel(poll_id)
+            except tk.TclError:
+                pass
+            self.poll_id = None
+
     def _on_close(self):
         if self.busy and not messagebox.askyesno("退出", "任务仍在运行。是否终止任务并退出？"):
             return
@@ -640,8 +670,9 @@ class ElectrochemApp:
 def smoke_test(project_root):
     root = tk.Tk()
     root.withdraw()
-    ElectrochemApp(root, project_root)
+    app = ElectrochemApp(root, project_root)
     root.update_idletasks()
+    app._cancel_polling()
     root.destroy()
 
 
