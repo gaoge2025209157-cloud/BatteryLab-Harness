@@ -92,6 +92,17 @@ class EvaluationSuiteTests(unittest.TestCase):
 
 
 class FixtureContentTests(unittest.TestCase):
+    def test_fixture_directory_has_no_stale_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            paths = build_fixtures(directory)
+
+            on_disk = {path.name for path in directory.glob("*.csv")}
+            self.assertEqual(on_disk, {path.name for path in paths.values()})
+            readme = (directory / "README.md").read_text(encoding="utf-8")
+            for path in paths.values():
+                self.assertIn(path.name, readme, "README 未说明 {}".format(path.name))
+
     def test_unit_variant_uses_microamp_millivolt_minute(self):
         with tempfile.TemporaryDirectory() as temp:
             fixtures = build_fixtures(Path(temp))
