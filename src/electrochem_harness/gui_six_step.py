@@ -58,6 +58,8 @@ class SixStepDialog(tk.Toplevel):
         self._blocked = False
         self._closed = False
         self._poll_id = None
+        self._dirty = False
+        self._loading = True
 
         self.title("受控分析：预检查 → 计划 → 批准 → 执行 → 验证 → 结果")
         self.transient(parent)
@@ -66,6 +68,9 @@ class SixStepDialog(tk.Toplevel):
         self._configure_style()
         self._build()
         self._show_step(WizardStep.DATA)
+        for variable in self.variables.values():
+            variable.trace_add("write", self._on_form_changed)
+        self._loading = False
         # 几何必须在窗口构建完成、transient 生效之后再设置，否则 Windows
         # 会把窗口级联到父窗口右下角并超出屏幕。
         self._fit_to_screen()
@@ -88,6 +93,17 @@ class SixStepDialog(tk.Toplevel):
         top = max(0, (screen_h - height) // 6)
         self.geometry("{}x{}+{}+{}".format(width, height, left, top))
         self.minsize(min(840, width), min(500, height))
+
+    def _on_form_changed(self, *_):
+        """计划一旦生成就不可变；改表单必须重新预检查，否则批准绑定的是旧计划。"""
+
+        if self._loading or self.wizard.step is WizardStep.DATA:
+            return
+        if self._dirty:
+            return
+        self._dirty = True
+        self.status.set("参数已改变：请回到第 1 步重新预检查，当前计划与批准已失效")
+        self._refresh_footer(self.wizard.step)
 
     # -- construction ---------------------------------------------------------
 
@@ -113,6 +129,9 @@ class SixStepDialog(tk.Toplevel):
         style.configure("Hint.TLabel", foreground="#555555")
         style.configure("Title.TLabel", font=("Microsoft YaHei UI", 15, "bold"))
         style.configure("Blocking.TLabel", foreground="#a10000", font=("Microsoft YaHei UI", 10, "bold"))
+        # Tk 默认行高不随 DPI 缩放，中文会被上下裁切，这里显式给足
+        style.configure("Treeview", rowheight=30, font=("Microsoft YaHei UI", 9))
+        style.configure("Treeview.Heading", font=("Microsoft YaHei UI", 9, "bold"))
 
     def _build(self):
         outer = ttk.Frame(self, padding=14)
@@ -402,6 +421,10 @@ class SixStepDialog(tk.Toplevel):
             self.network_note.configure(text="本次未启用联网检索，不会有任何数据离开本机。")
 
     def _refresh_approve_button(self):
+        if self._dirty:
+            self.approve_button.configure(state="disabled")
+            self.status.set("参数已改变：请回到第 1 步重新预检查，当前计划与批准已失效")
+            return
         required = set(self.wizard.required_scopes)
         selected = {scope for scope, var in self.scope_vars.items() if var.get()}
         missing = required - selected
@@ -443,19 +466,20 @@ class SixStepDialog(tk.Toplevel):
     def _build_results_page(self):
         page = ttk.Frame(self.inner)
         page.columnconfigure(0, weight=1)
-        page.rowconfigure(1, weight=1)
+        # 表格固定行数、不参与纵向拉伸：否则它会把下面的降级提示和操作按钮挤出视野。
         self.results_headline = ttk.Label(page, text="", style="Title.TLabel", wraplength=940)
         self.results_headline.grid(row=0, column=0, sticky="w", pady=(0, 8))
 
         self.results_tree = ttk.Treeview(
-            page, columns=("state", "path"), show="tree headings", height=8
+            page, columns=("state", "path"), show="tree headings", height=12
         )
         self.results_tree.heading("#0", text="产物")
         self.results_tree.heading("state", text="状态")
         self.results_tree.heading("path", text="路径")
         self.results_tree.column("#0", width=260, anchor="w")
         self.results_tree.column("state", width=90, anchor="center")
-        self.results_tree.column("path", width=620, anchor="w")
+        self.results_tree.column("path", width=320, anchor="w")
+        self.results_tree.bind("<Double-1>", self._open_selected_artifact)
         scroll = ttk.Scrollbar(page, orient="vertical", command=self.results_tree.yview)
         self.results_tree.configure(yscrollcommand=scroll.set)
         self.results_tree.grid(row=1, column=0, sticky="nsew")
@@ -474,6 +498,36 @@ class SixStepDialog(tk.Toplevel):
         self.retry_button.grid(row=0, column=2, padx=6)
         ttk.Button(actions, text="返回第 1 步修改", command=self.back_to_form).grid(row=0, column=3, padx=6)
         return page
+
+    def _display_path(self, path):
+        """Show paths relative to the run directory; absolute temp paths are noisy."""
+
+        if path is None:
+            return ""
+        candidate = Path(path)
+        run_dir = self._run_dir()
+        if run_dir is not None:
+            try:
+                return str(candidate.relative_to(run_dir))
+            except ValueError:
+                pass
+        return candidate.name
+
+    def _open_selected_artifact(self, event=None):
+        selection = self.results_tree.selection()
+        if not selection:
+            return
+        values = self.results_tree.item(selection[0], "values")
+        if len(values) < 2 or not values[1]:
+            return
+        run_dir = self._run_dir()
+        if run_dir is None:
+            return
+        target = Path(run_dir) / values[1]
+        if target.is_file():
+            self._open(target)
+        else:
+            messagebox.showinfo("尚未生成", "该产物在本次运行中没有生成。", parent=self)
 
     def _render_results(self):
         results = self.wizard.results
@@ -500,7 +554,7 @@ class SixStepDialog(tk.Toplevel):
                     parent,
                     "end",
                     text="  " + entry.name,
-                    values=(state, "" if entry.path is None else str(entry.path)),
+                    values=(state, self._display_path(entry.path)),
                 )
 
         endings = {
@@ -557,7 +611,8 @@ class SixStepDialog(tk.Toplevel):
             self.back_button.configure(state=busy_state)
             # 计划页必须能继续走到第 4 步：这里曾经被误设成 disabled，用户会卡死。
             self.next_button.configure(
-                text="下一步：确认批准范围", state="disabled" if self.busy else "normal"
+                text="下一步：确认批准范围",
+                state="disabled" if self.busy or self._dirty else "normal",
             )
             self.cancel_button.configure(state="disabled")
         elif step is WizardStep.APPROVAL:
@@ -612,6 +667,7 @@ class SixStepDialog(tk.Toplevel):
             messagebox.showerror("预检查失败", str(error), parent=self)
             return
         self._blocked = view.blocked
+        self._dirty = False
         self._render_preflight(view)
         self._show_step(WizardStep.PREFLIGHT)
         self.status.set("存在阻断问题，请修正后重新检查" if view.blocked else "预检查通过")
@@ -749,6 +805,7 @@ class SixStepDialog(tk.Toplevel):
     def back_to_form(self):
         self.wizard.back_to_form()
         self._blocked = False
+        self._dirty = False
         self._show_step(WizardStep.DATA)
         self.status.set("已回到第 1 步，原批准已失效")
 

@@ -198,6 +198,53 @@ class SixStepApprovalTests(DialogTestCase):
             self.assertIn("Crossref", dialog2.network_note.cget("text"))
 
 
+class PlanInvalidationTests(DialogTestCase):
+    """计划是不可变的：生成后改表单必须让批准失效，且要明确告诉用户回去重做。"""
+
+    def _to_approval(self, dialog):
+        dialog.go_next()
+        dialog.go_next()
+        dialog.go_next()
+        self.assertEqual(dialog.wizard.step, WizardStep.APPROVAL)
+
+    def test_changing_a_field_after_the_plan_disables_approval(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, dialog = self.make(values(SAMPLE, Path(temp) / "out"))
+            self._to_approval(dialog)
+            self.assertEqual(str(dialog.approve_button.cget("state")), "normal")
+
+            dialog.variables["max_literature"].set(9)
+
+            self.assertTrue(dialog._dirty)
+            self.assertEqual(str(dialog.approve_button.cget("state")), "disabled")
+            self.assertIn("第 1 步", dialog.status.get())
+
+    def test_rebuilding_the_plan_clears_the_warning(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, dialog = self.make(values(SAMPLE, Path(temp) / "out"))
+            self._to_approval(dialog)
+            dialog.variables["max_literature"].set(9)
+            self.assertTrue(dialog._dirty)
+
+            dialog.back_to_form()
+            self.assertFalse(dialog._dirty)
+            dialog.go_next()
+
+            self.assertEqual(dialog.wizard.step, WizardStep.PREFLIGHT)
+            self.assertFalse(dialog._dirty)
+
+    def test_plan_step_blocks_while_the_form_is_dirty(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, dialog = self.make(values(SAMPLE, Path(temp) / "out"))
+            dialog.go_next()
+            dialog.go_next()
+            self.assertEqual(dialog.wizard.step, WizardStep.PLAN)
+
+            dialog.variables["test_current"].set("0.5 C")
+
+            self.assertEqual(str(dialog.next_button.cget("state")), "disabled")
+
+
 class SixStepExecutionTests(DialogTestCase):
     def _run(self, dialog, root):
         dialog.go_next()
@@ -250,6 +297,46 @@ class SixStepExecutionTests(DialogTestCase):
             self.assertTrue((first / "events.jsonl").is_file())
             self.assertTrue((second / "events.jsonl").is_file())
             self.assertIn("retry_requested", (second / "events.jsonl").read_text(encoding="utf-8"))
+
+    def test_result_paths_are_relative_to_the_run_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, dialog = self.make(values(SAMPLE, Path(temp) / "out"))
+            self._run(dialog, root)
+
+            for group in dialog.results_tree.get_children():
+                for item in dialog.results_tree.get_children(group):
+                    shown = dialog.results_tree.item(item, "values")[1]
+                    self.assertFalse(
+                        str(temp) in shown, "结果页不应显示绝对临时路径：{}".format(shown)
+                    )
+            report_row = next(
+                item
+                for group in dialog.results_tree.get_children()
+                for item in dialog.results_tree.get_children(group)
+                if dialog.results_tree.item(item, "text").strip() == "关键参数报告.md"
+            )
+            self.assertTrue(
+                dialog.results_tree.item(report_row, "values")[1].startswith("artifacts")
+            )
+
+    def test_double_click_opens_a_generated_artifact(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, dialog = self.make(values(SAMPLE, Path(temp) / "out"))
+            self._run(dialog, root)
+            report_row = next(
+                item
+                for group in dialog.results_tree.get_children()
+                for item in dialog.results_tree.get_children(group)
+                if dialog.results_tree.item(item, "text").strip() == "关键参数报告.md"
+            )
+            dialog.results_tree.selection_set(report_row)
+            opened = []
+            with patch("electrochem_harness.gui_six_step.os.startfile", create=True) as start:
+                start.side_effect = lambda path: opened.append(path)
+                dialog._open_selected_artifact()
+
+            self.assertEqual(len(opened), 1)
+            self.assertTrue(str(opened[0]).endswith("关键参数报告.md"))
 
     def test_back_to_form_returns_to_step_one(self):
         with tempfile.TemporaryDirectory() as temp:
