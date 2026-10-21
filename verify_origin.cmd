@@ -90,6 +90,8 @@ echo    2. Run   verify_origin.py --list   to see what was detected.
 echo    3. If Origin is installed somewhere unusual, pass the full path:
 echo         verify_origin.py --origin-exe "C:\path\to\Origin64.exe"
 echo.
+echo  See START-HERE.md for more troubleshooting.
+echo.
 pause
 exit /b 2
 
