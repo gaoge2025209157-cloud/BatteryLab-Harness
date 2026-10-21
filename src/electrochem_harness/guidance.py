@@ -33,6 +33,51 @@ def _quality_issues(points, context: ExperimentContext) -> List[QualityIssue]:
                 )
             )
             break
+    negative_voltage_rows = [point.source_row for point in points if point.voltage_V < 0]
+    if negative_voltage_rows:
+        issues.append(
+            QualityIssue(
+                code="negative_voltage",
+                message=(
+                    "{} points have voltage below 0 V (first source row {}); "
+                    "review the configured voltage window and instrument settings."
+                ).format(len(negative_voltage_rows), negative_voltage_rows[0]),
+                blocking=False,
+            )
+        )
+
+    cycle_numbers = sorted({point.cycle for point in points})
+    jumps = [
+        (left, right)
+        for left, right in zip(cycle_numbers, cycle_numbers[1:])
+        if right != left + 1
+    ]
+    if jumps:
+        issues.append(
+            QualityIssue(
+                code="cycle_number_jump",
+                message="source cycle numbers contain jumps: {}".format(
+                    ", ".join("{}->{}".format(left, right) for left, right in jumps)
+                ),
+                blocking=False,
+            )
+        )
+
+    for cycle in cycle_numbers:
+        currents = [point.current_mA for point in points if point.cycle == cycle]
+        has_charge = any(current > 0 for current in currents)
+        has_discharge = any(current < 0 for current in currents)
+        if not has_charge or not has_discharge:
+            missing = "charge" if not has_charge else "discharge"
+            issues.append(
+                QualityIssue(
+                    code="incomplete_cycle",
+                    message="source cycle {} has no {} current interval; paired efficiency and retention are unavailable.".format(
+                        cycle, missing
+                    ),
+                    blocking=False,
+                )
+            )
     if context.active_mass_mg is None:
         issues.append(
             QualityIssue(

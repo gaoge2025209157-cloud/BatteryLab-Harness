@@ -1,0 +1,68 @@
+{
+  "template_version": "1.0",
+  "status": "pending_human_review",
+  "data_policy": {
+    "synthetic_or_redacted_only": true,
+    "private_source_file": null,
+    "private_source_hash": null
+  },
+  "experiment_context": {
+    "system": "S/C cathode vs Li metal",
+    "cell_type": "half-cell",
+    "normalization_basis": "active material mass — confirm before release",
+    "current_or_rate": null,
+    "temperature_C": null,
+    "voltage_window_V": null
+  },
+  "cycle_mapping": {
+    "source_cycle_field_available": null,
+    "initial_discharge_present": null,
+    "candidate_mapping": "unresolved",
+    "alternatives": [
+      {
+        "id": "A",
+        "description": "Pair initial discharge with the following charge only if the instrument step program supports that pairing.",
+        "first_cycle_coulombic_efficiency": null
+      },
+      {
+        "id": "B",
+        "description": "Retain initial discharge as an unpaired formal first segment; begin paired efficiency from the following charge/discharge pair.",
+        "first_cycle_coulombic_efficiency": null
+      }
+    ],
+    "decision_evidence_ids": [],
+    "decision": null,
+    "decision_basis": null
+  },
+  "golden_answers": {
+    "reference_complete_discharge_cycle": null,
+    "cycles": [],
+    "tolerances": {
+      "same_standardized_points": {
+        "capacity_or_energy_absolute_unit": 1e-9,
+        "capacity_or_energy_relative": 1e-6,
+        "efficiency_or_retention_fraction": 1e-6,
+        "voltage_V": 1e-6
+      },
+      "rounded_device_display": {
+        "capacity_or_energy_display_lsd": null,
+        "capacity_or_energy_reported_unit": null,
+        "capacity_relative": 0.001,
+        "efficiency_or_retention_percentage_point": 0.1,
+        "voltage_display_lsd_V": null,
+        "voltage_minimum_V": 0.001,
+        "confirmation_required": true
+      }
+    }
+  },
+  "review": {
+    "blue_software_checked": false,
+    "manual_calculation_checked": false,
+    "harness_checked": false,
+    "reviewers": {
+      "J": {"confirmed": false, "evidence_ids": []},
+      "C": {"confirmed": false, "evidence_ids": []}
+    },
+    "release_gate": "blocked"
+  }
+}

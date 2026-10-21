@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — Work package A
+
+- add DOI-backed evidence, full-text availability, publication-gate and
+  falsifiable-hypothesis modules;
+- keep the scientific release gate closed until real-data review, experimental
+  issues, metric tolerances and J/C confirmations are recorded;
+- report negative voltage, incomplete current direction and source-cycle jumps
+  in four-column data;
+- record applied current-sign reversal in LAND import metadata;
+- make rounded-display tolerance depend on the least-significant digit and the
+  actual reported unit;
+- add executable boundary tests for constant-voltage integration, non-finite
+  input, uA/mV conversion and the new quality warnings.
+- record candidate B as the deterministic three-column draft calculation
+  convention while keeping instrument-defined cycle mapping pending;
+- add a privacy-safe current review record with reserved placeholders for the
+  unavailable raw export, device cycle summary and voltage-window evidence;
+- document DOI-backed general definitions for capacity, coulombic efficiency,
+  retention, energy and normalization boundaries.
+
 ## 0.4.0 — 2026-10-12
 
 ### Origin兼容范围
@@ -49,4 +69,4 @@
 - 不支持蓝电专有二进制数据库及 Excel 直接输入；
 - 文献性能值来自公开题名/摘要时只能用于初筛；
 - 期刊影响因子不属于 Crossref 开放元数据；
-- CV、EIS、GITT 和 dQ/dV 尚未实现。
+- 恒压段在有电流和时间时计入容量与能量；独立 CV 分析、EIS、GITT 和 dQ/dV 尚未实现。
