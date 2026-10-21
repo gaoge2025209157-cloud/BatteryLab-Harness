@@ -303,9 +303,10 @@ class SixStepExecutionTests(DialogTestCase):
             root, dialog = self.make(values(SAMPLE, Path(temp) / "out"))
             self._run(dialog, root)
 
+            # 列顺序：状态 / SHA-256 / 路径
             for group in dialog.results_tree.get_children():
                 for item in dialog.results_tree.get_children(group):
-                    shown = dialog.results_tree.item(item, "values")[1]
+                    shown = dialog.results_tree.item(item, "values")[2]
                     self.assertFalse(
                         str(temp) in shown, "结果页不应显示绝对临时路径：{}".format(shown)
                     )
@@ -316,8 +317,32 @@ class SixStepExecutionTests(DialogTestCase):
                 if dialog.results_tree.item(item, "text").strip() == "关键参数报告.md"
             )
             self.assertTrue(
-                dialog.results_tree.item(report_row, "values")[1].startswith("artifacts")
+                dialog.results_tree.item(report_row, "values")[2].startswith("artifacts")
             )
+
+    def test_results_show_the_recorded_sha256_of_each_artifact(self):
+        """界面必须能查到产物哈希——这是 Phase 5 验收的第 5 条硬门。"""
+
+        with tempfile.TemporaryDirectory() as temp:
+            root, dialog = self.make(values(SAMPLE, Path(temp) / "out"))
+            self._run(dialog, root)
+
+            report_row = next(
+                item
+                for group in dialog.results_tree.get_children()
+                for item in dialog.results_tree.get_children(group)
+                if dialog.results_tree.item(item, "text").strip() == "关键参数报告.md"
+            )
+            shown = dialog.results_tree.item(report_row, "values")[1]
+            self.assertTrue(shown, "已生成的产物应显示 SHA-256")
+
+            # 表格里只放前 16 位加省略号，完整值在下方输入框里。
+            dialog.results_tree.selection_set(report_row)
+            dialog._show_selected_hash()
+            full = dialog.full_hash.get()
+            self.assertEqual(len(full), 64, "完整哈希应为 64 位十六进制")
+            self.assertTrue(full.startswith(shown.rstrip("…")))
+            int(full, 16)  # 必须是合法十六进制
 
     def test_double_click_opens_a_generated_artifact(self):
         with tempfile.TemporaryDirectory() as temp:

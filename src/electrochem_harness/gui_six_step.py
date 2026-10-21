@@ -9,6 +9,7 @@ The dialog replaces the old "start analysis" button, which shelled out to
 after a failure.
 """
 
+import json
 import os
 import queue
 import threading
@@ -28,6 +29,15 @@ _STEP_ORDER = (
     WizardStep.EXECUTE,
     WizardStep.RESULTS,
 )
+
+def _short_digest(value: str) -> str:
+    """表格里只显示前 12 位；完整值放到下方可复制的输入框。
+
+    12 位足够人工比对，也给产物名留出空间——产物名被截断比哈希短几位更影响阅读。
+    """
+
+    return "" if not value else value[:12] + "…"
+
 
 _CHIP_LABELS = {
     WizardStep.DATA: "1 数据",
@@ -471,15 +481,19 @@ class SixStepDialog(tk.Toplevel):
         self.results_headline.grid(row=0, column=0, sticky="w", pady=(0, 8))
 
         self.results_tree = ttk.Treeview(
-            page, columns=("state", "path"), show="tree headings", height=12
+            page, columns=("state", "sha256", "path"), show="tree headings", height=12
         )
         self.results_tree.heading("#0", text="产物")
         self.results_tree.heading("state", text="状态")
+        self.results_tree.heading("sha256", text="SHA-256")
         self.results_tree.heading("path", text="路径")
-        self.results_tree.column("#0", width=260, anchor="w")
-        self.results_tree.column("state", width=90, anchor="center")
-        self.results_tree.column("path", width=320, anchor="w")
+        self.results_tree.column("#0", width=268, anchor="w")
+        self.results_tree.column("state", width=76, anchor="center")
+        # 12 位十六进制加省略号约需 110px。
+        self.results_tree.column("sha256", width=132, anchor="w")
+        self.results_tree.column("path", width=235, anchor="w")
         self.results_tree.bind("<Double-1>", self._open_selected_artifact)
+        self.results_tree.bind("<<TreeviewSelect>>", self._show_selected_hash)
         scroll = ttk.Scrollbar(page, orient="vertical", command=self.results_tree.yview)
         self.results_tree.configure(yscrollcommand=scroll.set)
         self.results_tree.grid(row=1, column=0, sticky="nsew")
@@ -488,8 +502,21 @@ class SixStepDialog(tk.Toplevel):
         self.degradation_label = ttk.Label(page, text="", style="Hint.TLabel", wraplength=940)
         self.degradation_label.grid(row=2, column=0, sticky="w", pady=(8, 0))
 
+        # 表格里只放前 16 位；完整值在这里给出，可选中复制，用于对外核对。
+        hash_row = ttk.Frame(page)
+        hash_row.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        hash_row.columnconfigure(1, weight=1)
+        ttk.Label(hash_row, text="选中项完整哈希", style="Hint.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(0, 8)
+        )
+        self.full_hash = tk.StringVar(value="（选中上方任意一行）")
+        self.full_hash_entry = ttk.Entry(
+            hash_row, textvariable=self.full_hash, state="readonly"
+        )
+        self.full_hash_entry.grid(row=0, column=1, sticky="ew")
+
         actions = ttk.Frame(page)
-        actions.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        actions.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         ttk.Button(actions, text="打开输出目录", command=self.open_run_artifacts).grid(row=0, column=0)
         ttk.Button(actions, text="打开审计目录", command=self.open_run_directory).grid(
             row=0, column=1, padx=6
@@ -513,17 +540,51 @@ class SixStepDialog(tk.Toplevel):
                 pass
         return candidate.name
 
+    def _recorded_hashes(self):
+        """Read the SHA-256 values recorded when the run was validated.
+
+        读 run_record.json 而不是现场重新计算：记录里存的是本次运行实际校验过的
+        内容。如果磁盘上的文件之后被改动，两者不一致本身就是需要看到的信息。
+        """
+
+        run_dir = self._run_dir()
+        if run_dir is None:
+            return {}
+        try:
+            payload = json.loads(
+                (run_dir / "run_record.json").read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            return {}
+        hashes = {}
+        for item in payload.get("artifacts") or ():
+            if isinstance(item, dict) and item.get("path") and item.get("sha256"):
+                hashes[str(item["path"])] = str(item["sha256"])
+        return hashes
+
+    def _show_selected_hash(self, event=None):
+        """Put the full digest of the selected row into the copyable field."""
+
+        selection = self.results_tree.selection()
+        if not selection:
+            return
+        item = selection[0]
+        name = self.results_tree.item(item, "text").strip()
+        digest = getattr(self, "_hashes", {}).get(name, "")
+        self.full_hash.set(digest or "（该产物没有登记哈希）")
+
     def _open_selected_artifact(self, event=None):
         selection = self.results_tree.selection()
         if not selection:
             return
         values = self.results_tree.item(selection[0], "values")
-        if len(values) < 2 or not values[1]:
+        # 列顺序：状态 / SHA-256 / 路径
+        if len(values) < 3 or not values[2]:
             return
         run_dir = self._run_dir()
         if run_dir is None:
             return
-        target = Path(run_dir) / values[1]
+        target = Path(run_dir) / values[2]
         if target.is_file():
             self._open(target)
         else:
@@ -535,6 +596,7 @@ class SixStepDialog(tk.Toplevel):
             return
         for item in self.results_tree.get_children():
             self.results_tree.delete(item)
+        self._hashes = self._recorded_hashes()
         groups = (
             ("报告与数值", results.report),
             ("文献证据（可选）", results.evidence),
@@ -542,7 +604,9 @@ class SixStepDialog(tk.Toplevel):
             ("审计记录", results.audit),
         )
         for title, entries in groups:
-            parent = self.results_tree.insert("", "end", text=title, values=("", ""), open=True)
+            parent = self.results_tree.insert(
+                "", "end", text=title, values=("", "", ""), open=True
+            )
             for entry in entries:
                 if entry.available:
                     state = "已生成"
@@ -550,12 +614,26 @@ class SixStepDialog(tk.Toplevel):
                     state = "缺失"
                 else:
                     state = "未启用"
+                digest = self._hashes.get(entry.name, "")
+                if digest:
+                    sha_cell = _short_digest(digest)
+                elif entry.available:
+                    # 文件存在但没有登记哈希，说明它没进入校验环节；
+                    # 留白会让人以为是界面漏显示，所以明确标注。
+                    sha_cell = "未登记"
+                else:
+                    sha_cell = ""
                 self.results_tree.insert(
                     parent,
                     "end",
                     text="  " + entry.name,
-                    values=(state, self._display_path(entry.path)),
+                    values=(
+                        state,
+                        sha_cell,
+                        self._display_path(entry.path),
+                    ),
                 )
+        self.full_hash.set("（选中上方任意一行查看完整哈希）")
 
         endings = {
             "completed": "全部校验通过",
