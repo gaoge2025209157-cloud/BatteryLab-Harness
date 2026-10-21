@@ -202,6 +202,9 @@ def analyze_land_capacity_curve(path: Path) -> dict:
     return {
         "import_metadata": {
             "mode": "specific_capacity_curve",
+            "cycle_mapping_convention": "initial_discharge_unpaired_then_charge_discharge_pairs",
+            "cycle_number_basis": "reconstructed_complete_pair_index",
+            "normalization_basis": "source_exported_specific_capacity_denominator_unverified",
             "encoding": encoding,
             "delimiter": "tab" if delimiter == "\t" else delimiter,
             "header_row": header_index + 1,
@@ -225,6 +228,7 @@ def analyze_land_capacity_curve(path: Path) -> dict:
             "limitations": [
                 "The export has no current column, so capacity/energy are not reintegrated.",
                 "Cycle boundaries are reconstructed from exported specific-capacity resets.",
+                "The initial discharge is retained as an unpaired segment; reconstructed cycle 1 begins with the next charge/discharge pair.",
                 "Specific-capacity normalization cannot be audited without active-mass metadata.",
             ],
         },

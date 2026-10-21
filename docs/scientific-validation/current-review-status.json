@@ -1,0 +1,80 @@
+{
+  "record_version": "1.0",
+  "record_date": "2026-10-21",
+  "status": "pending_human_review",
+  "scope": "generic three-column specific-capacity reconstruction",
+  "data_policy": {
+    "private_data_committed": false,
+    "personal_paths_committed": false,
+    "source_identifiers_committed": false
+  },
+  "source_materials": {
+    "raw_export": {
+      "status": "pending",
+      "placeholder": "reserved for a later private source record"
+    },
+    "device_cycle_summary": {
+      "status": "pending",
+      "placeholder": "reserved for a later private source record"
+    },
+    "project_source_code": {
+      "status": "reviewed",
+      "evidence": [
+        "src/electrochem_harness/land_curve.py",
+        "docs/scientific-validation/cycle-mapping-golden-answer.template.json",
+        "standards/SCIENTIFIC_STANDARD_v1.md"
+      ]
+    }
+  },
+  "experiment_context": {
+    "project_template_system": "S/C cathode vs Li metal",
+    "project_template_cell_type": "half-cell",
+    "scope_note": "project template context; not independently verified against the unavailable raw export"
+  },
+  "cycle_mapping": {
+    "status": "resolved_for_generic_calculation",
+    "calculation_convention": "B",
+    "decision": "retain an initial discharge as an unpaired segment; reconstructed cycle 1 starts at the following charge/discharge pair",
+    "basis": "the restricted-mode implementation already follows this convention",
+    "instrument_source_mapping": "pending until source cycle fields or the step program are available"
+  },
+  "normalization": {
+    "status": "partially_resolved",
+    "reported_unit": "mAh/g",
+    "calculation_policy": "use the specific-capacity values exported by the source software without renormalizing",
+    "denominator_identity": "pending",
+    "mass_value": "pending",
+    "release_effect": "blocks an audited normalization claim"
+  },
+  "voltage_window": {
+    "status": "pending",
+    "placeholder": "reserved for cutoff settings and review of negative-voltage points"
+  },
+  "final_segment": {
+    "status": "context_recorded",
+    "reported_context": "the final segment is generally caused by program interruption",
+    "metric_handling": "excluded",
+    "policy": "retain the segment and warning; do not calculate paired coulombic efficiency or retention"
+  },
+  "metric_definitions": {
+    "status": "documented",
+    "reference": "docs/scientific-validation/metric-definitions.md"
+  },
+  "literature": {
+    "status": "definition_context_only",
+    "direct_performance_comparison": false,
+    "reason": "raw test conditions and normalization denominator are unavailable"
+  },
+  "reviewers": {
+    "J": "pending",
+    "C": "pending"
+  },
+  "publication_gate": "blocked",
+  "blocking_items": [
+    "raw export and device cycle summary unavailable",
+    "normalization denominator and mass unavailable",
+    "voltage window and negative-voltage interpretation unavailable",
+    "Blue/Manual/Harness same-source comparison pending",
+    "J and C confirmations pending"
+  ]
+}

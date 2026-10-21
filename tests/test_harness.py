@@ -69,6 +69,38 @@ class AnalysisTests(unittest.TestCase):
         self.assertGreater(metrics[0].charge_capacity_mAh, 0)
         self.assertIsNone(metrics[0].specific_discharge_capacity_mAh_g)
 
+    def test_constant_voltage_current_is_integrated(self):
+        from electrochem_harness.models import CyclingPoint
+
+        points = [
+            CyclingPoint(1, 0.0, 2.0, 4.0, 2),
+            CyclingPoint(1, 1800.0, 2.0, 4.0, 3),
+        ]
+        metric = analyze_cycles(points)[0]
+
+        self.assertAlmostEqual(metric.charge_capacity_mAh, 1.0)
+        self.assertAlmostEqual(metric.charge_energy_mWh, 4.0)
+
+    def test_negative_voltage_energy_is_retained_instead_of_clamped(self):
+        from electrochem_harness.models import CyclingPoint
+
+        points = [
+            CyclingPoint(1, 0.0, -1.0, -0.2, 2),
+            CyclingPoint(1, 3600.0, -1.0, -0.2, 3),
+        ]
+        metric = analyze_cycles(points)[0]
+
+        self.assertAlmostEqual(metric.discharge_capacity_mAh, 1.0)
+        self.assertAlmostEqual(metric.discharge_energy_mWh, -0.2)
+        self.assertAlmostEqual(metric.average_discharge_voltage_V, -0.2)
+
+    def test_nonfinite_value_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "nonfinite.csv"
+            write_csv(path, [[1, 0, "nan", 3.0]])
+            with self.assertRaisesRegex(ValueError, "Non-finite"):
+                load_cycling_csv(path)
+
 
 class KnowledgeAndGuidanceTests(unittest.TestCase):
     def setUp(self):
@@ -143,6 +175,28 @@ class KnowledgeAndGuidanceTests(unittest.TestCase):
 
         self.assertEqual(report.metrics, [])
         self.assertTrue(any(issue.code == "non_monotonic_time" and issue.blocking for issue in report.quality_issues))
+
+    def test_negative_voltage_incomplete_cycle_and_cycle_jump_are_reported(self):
+        path = self.root / "quality_cases.csv"
+        write_csv(
+            path,
+            [
+                [1, 0, 1.0, 0.1],
+                [1, 10, 1.0, -0.1],
+                [3, 20, 1.0, 0.2],
+                [3, 30, -1.0, 0.1],
+            ],
+        )
+        report = run_harness(
+            path,
+            ExperimentContext(system_type="half_cell"),
+            KnowledgeBase(self.rules_path, self.experiences_path),
+        )
+        codes = [issue.code for issue in report.quality_issues]
+
+        self.assertIn("negative_voltage", codes)
+        self.assertIn("cycle_number_jump", codes)
+        self.assertIn("incomplete_cycle", codes)
 
     def test_validated_experience_is_project_scoped_and_feedback_changes_confidence(self):
         store = ExperienceStore(self.experiences_path)
@@ -227,6 +281,26 @@ class LandExportAdapterTests(unittest.TestCase):
         self.assertEqual(result.points[0].current_mA, 1.0)
         self.assertEqual(result.points[2].current_mA, -1.0)
         self.assertEqual(result.delimiter, "\t")
+        self.assertTrue(result.metadata()["current_sign_reversed"])
+        self.assertEqual(result.metadata()["charge_current_sign"], "negative")
+
+    def test_converts_microamp_and_millivolt_units(self):
+        from electrochem_harness.land import LandImportConfig, load_land_export
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "small_units.csv"
+            path.write_text(
+                "循环号,时间(s),电流(uA),电压(mV)\n"
+                "1,0,1000,3000\n1,1,-500,2500\n",
+                encoding="utf-8",
+            )
+            result = load_land_export(path, LandImportConfig())
+
+        self.assertEqual(result.detected_units["current"], "uA")
+        self.assertEqual(result.detected_units["voltage"], "mV")
+        self.assertAlmostEqual(result.points[0].current_mA, 1.0)
+        self.assertAlmostEqual(result.points[1].current_mA, -0.5)
+        self.assertAlmostEqual(result.points[0].voltage_V, 3.0)
 
     def test_skips_land_metadata_rows_before_header(self):
         from electrochem_harness.land import LandImportConfig, load_land_export
@@ -316,6 +390,14 @@ class LandSpecificCapacityCurveTests(unittest.TestCase):
             result = analyze_land_capacity_curve(path)
 
         self.assertEqual(result["import_metadata"]["mode"], "specific_capacity_curve")
+        self.assertEqual(
+            result["import_metadata"]["cycle_mapping_convention"],
+            "initial_discharge_unpaired_then_charge_discharge_pairs",
+        )
+        self.assertEqual(
+            result["import_metadata"]["normalization_basis"],
+            "source_exported_specific_capacity_denominator_unverified",
+        )
         self.assertEqual(result["report"]["initial_discharge_capacity_mAh_g"], 100.0)
         self.assertEqual(len(result["report"]["cycles"]), 2)
         self.assertTrue(result["report"]["cycles"][0]["complete"])

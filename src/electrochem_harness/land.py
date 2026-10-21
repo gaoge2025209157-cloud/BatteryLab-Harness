@@ -67,6 +67,8 @@ class LandImportResult:
     delimiter: str
     encoding: str
     header_row: int
+    charge_current_sign: str
+    current_sign_reversed: bool
 
     def metadata(self) -> dict:
         payload = asdict(self)
@@ -236,4 +238,6 @@ def load_land_export(path: Path, config: Optional[LandImportConfig] = None) -> L
         delimiter=delimiter,
         encoding=encoding,
         header_row=header_index + 1,
+        charge_current_sign=config.charge_current_sign,
+        current_sign_reversed=config.charge_current_sign == "negative",
     )

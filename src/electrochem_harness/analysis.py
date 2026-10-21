@@ -75,15 +75,15 @@ def _integrate_linear_segment(
         right_fraction, right_current, right_voltage = right
         dt_hours = duration * (right_fraction - left_fraction) / 3600.0
         average_current = (left_current + right_current) / 2.0
-        average_power = (
-            left_voltage * left_current + right_voltage * right_current
+        average_directional_power = (
+            left_voltage * abs(left_current) + right_voltage * abs(right_current)
         ) / 2.0
         if average_current >= 0:
             charge_capacity += average_current * dt_hours
-            charge_energy += max(average_power, 0.0) * dt_hours
+            charge_energy += average_directional_power * dt_hours
         else:
             discharge_capacity += -average_current * dt_hours
-            discharge_energy += -min(average_power, 0.0) * dt_hours
+            discharge_energy += average_directional_power * dt_hours
     return charge_capacity, discharge_capacity, charge_energy, discharge_energy
 
 
