@@ -263,14 +263,105 @@ def detect_release(text: str, supported: Iterable[str]) -> Optional[str]:
     return release if release in allowed else None
 
 
+#: Origin 的对外版本名与内部版本号对照。
+#:
+#: 安装目录与 `orginfo.txt` 里只有内部版本号（例如 ``Ir103bSr2_243`` 表示
+#: 10.3b），而用户和配置文件说的是年份（2026b）。用户完全可以把 Origin 装在
+#: 任意目录下（例如 ``D:\hjp\origin``），此时路径里不含年份，只能靠这张表换算。
+#:
+#: 来源：OriginLab 官方 Release History，2026-10 核对
+#: https://www.originlab.com/index.aspx?go=SUPPORT&pid=3325
+_INTERNAL_RELEASES: Mapping[str, str] = {
+    "10.3b": "2026b",
+    "10.3": "2026",
+    "10.2b": "2025b",
+    "10.2": "2025",
+    "10.1b": "2024b",
+    "10.1": "2024",
+    "10.0b": "2023b",
+    "10.0": "2023",
+    "9.9b": "2022b",
+    "9.9": "2022",
+    "9.8b": "2021b",
+    "9.8": "2021",
+    "9.7b": "2020b",
+    "9.7": "2020",
+}
+
+_ORGINFO_VERSION = re.compile(r"(?i)^ir(\d{2,3})(b?)")
+
+
+def internal_version_from_orginfo(text: str) -> Optional[str]:
+    """Parse ``Ir103bSr2_243`` into ``10.3b``; return None when unrecognised."""
+
+    match = _ORGINFO_VERSION.match(str(text or "").strip())
+    if not match:
+        return None
+    digits, suffix = match.group(1), match.group(2).lower()
+    # 末位是小数部分：103 -> 10.3，100 -> 10.0，98 -> 9.8。
+    version = digits[:-1] + "." + digits[-1]
+    return version + suffix
+
+
+def _read_orginfo(install_dir: Path) -> Optional[str]:
+    try:
+        text = (Path(install_dir) / "orginfo.txt").read_text(
+            encoding="ascii", errors="ignore"
+        )
+    except OSError:
+        return None
+    return internal_version_from_orginfo(text)
+
+
+def resolve_release(exe_path: Path, supported: Iterable[str]) -> Optional[str]:
+    """Work out which release an ``Origin64.exe`` belongs to.
+
+    Two sources, in order:
+
+    1. the install path itself, when the user kept the default naming
+       (``...\\OriginLab\\Origin2023\\Origin64.exe``);
+    2. ``orginfo.txt`` next to the executable, which every Origin install ships
+       (``Ir103bSr2_243`` -> 10.3b -> 2026b).
+
+    Users are free to install Origin into any folder, so the path alone is not
+    reliable. Returning None is deliberate: guessing a release would let an
+    unverified version be reported as supported.
+    """
+
+    allowed = {str(item).lower() for item in supported}
+    path = Path(exe_path)
+    release = detect_release(str(path), allowed)
+    if release is not None:
+        return release
+    internal = _read_orginfo(path.parent)
+    if internal is None:
+        return None
+    release = _INTERNAL_RELEASES.get(internal)
+    return release if release in allowed else None
+
+
 def _release_score(release: str) -> Tuple[int, int]:
     year = int(release[:4])
     return year, 1 if release.endswith("b") else 0
 
 
 def _registry_candidates() -> Sequence[str]:
+    """Locate ``Origin64.exe`` through the registry.
+
+    Two things to be careful about:
+
+    * ``App Paths\\Origin64.exe`` frequently stores ``Origin_32.exe`` as its
+      default value (the 32-bit launcher) while the real 64-bit binary lives in
+      the directory named by the ``Path`` value. Reading only the default value
+      yields a file that does not exist, and every candidate then gets filtered
+      out by ``is_file()``.
+    * Users may install Origin anywhere, so the folder has to come from the
+      registry instead of a fixed list of install roots.
+    """
+
     if winreg is None:
         return ()
+
     found = []
     for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
         for view in getattr(winreg, "KEY_WOW64_64KEY", 0), getattr(
@@ -288,14 +379,24 @@ def _registry_candidates() -> Sequence[str]:
             except OSError:
                 continue
             try:
-                value, _ = winreg.QueryValueEx(key, "")
-            except OSError:
-                value = ""
+                default = ""
+                install_dir = ""
+                try:
+                    default = str(winreg.QueryValueEx(key, "")[0])
+                except OSError:
+                    pass
+                try:
+                    install_dir = str(winreg.QueryValueEx(key, "Path")[0])
+                except OSError:
+                    pass
             finally:
                 key.Close()
-            if value:
-                found.append(str(value))
-    return tuple(found)
+            if default:
+                found.append(default)
+            if install_dir:
+                found.append(str(Path(install_dir) / ORIGIN_PROCESS_NAME))
+    # 同一个路径可能在 32/64 两个视图里各出现一次。
+    return tuple(dict.fromkeys(found))
 
 
 def _filesystem_candidates(search_drives: Iterable[str]) -> Sequence[str]:
@@ -346,7 +447,7 @@ def find_origin(
             raise OriginNotFound(
                 "The supplied Origin executable does not exist: {}".format(explicit_exe)
             )
-        release = detect_release(str(candidate), supported)
+        release = resolve_release(candidate, supported)
         if release is None:
             raise OriginNotFound(
                 "The supplied Origin executable is outside the supported 2021-2026b "
@@ -362,7 +463,7 @@ def find_origin(
         path = Path(str(text))
         if not path.is_file():
             continue
-        release = detect_release(str(path), supported)
+        release = resolve_release(path, supported)
         if release is None:
             continue
         resolved[str(path.resolve())] = release

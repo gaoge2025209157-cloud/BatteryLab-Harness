@@ -274,5 +274,33 @@ class CmdEncodingTests(unittest.TestCase):
                 )
 
 
+class TrialDetectionTests(unittest.TestCase):
+    """试用版会在每张导出图上平铺 demo 水印。
+
+    自动化链路照样能跑通，但产出的图不能用于论文，所以报告必须点明这一点，
+    否则使用者会以为"验证通过 = 图可以直接用"。
+    """
+
+    def test_trial_marker_in_install_log(self):
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / "InstallLog.txt").write_text(
+                "10-21-2026 20:34:51 Install std trial version=243", encoding="ascii"
+            )
+
+            self.assertTrue(verify_origin.is_trial_build(Path(temp)))
+
+    def test_missing_install_log_is_not_trial(self):
+        with tempfile.TemporaryDirectory() as temp:
+            self.assertFalse(verify_origin.is_trial_build(Path(temp)))
+
+    def test_licensed_install_log_is_not_trial(self):
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / "InstallLog.txt").write_text(
+                "10-21-2026 20:34:51 Install started", encoding="ascii"
+            )
+
+            self.assertFalse(verify_origin.is_trial_build(Path(temp)))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -46,6 +46,7 @@ from electrochem_harness.origin_adapter import (
     detect_release,
     find_origin,
     load_compatibility,
+    resolve_release,
     _filesystem_candidates,
     _registry_candidates,
 )
@@ -97,7 +98,7 @@ def scan_installations(
         path = Path(str(text))
         if not path.is_file():
             continue
-        release = detect_release(str(path), supported)
+        release = resolve_release(path, supported)
         if release is None:
             continue
         try:
@@ -125,6 +126,26 @@ def png_size(path: Path) -> Optional[Tuple[int, int]]:
     width = int.from_bytes(header[16:20], "big")
     height = int.from_bytes(header[20:24], "big")
     return (width, height)
+
+
+def is_trial_build(install_dir: Path) -> bool:
+    """Detect the trial marker Origin writes into its install log.
+
+    Trial builds stamp a ``demo`` watermark across every exported graph. That
+    does not invalidate the automation check -- axes, curves and legend are all
+    real -- but the figures cannot go into a paper as they are.
+
+    The marker is written at install time, so upgrading to a licensed serial
+    number later does not clear it. Read it as "was installed as a trial".
+    """
+
+    try:
+        text = (Path(install_dir) / "InstallLog.txt").read_text(
+            encoding="ascii", errors="ignore"
+        )
+    except OSError:
+        return False
+    return "trial" in text.lower()
 
 
 # ---------------------------------------------------------------- 检查项
@@ -159,6 +180,7 @@ class Verification:
     elapsed: float = 0.0
     error: Optional[str] = None
     output_dir: Optional[Path] = None
+    trial: bool = False
 
     @property
     def decisive(self) -> List[Check]:
@@ -185,6 +207,7 @@ class Verification:
             "claimed_validated_by_compat_table": self.installation.locally_validated,
             "verdict": self.verdict,
             "passed": self.passed,
+            "trial_build": self.trial,
             "error": self.error,
             "run_state": self.run_state,
             "run_dir": None if self.run_dir is None else str(self.run_dir),
@@ -248,6 +271,7 @@ def verify_one(
     """
 
     verification = Verification(installation=installation)
+    verification.trial = is_trial_build(installation.path.parent)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     out_dir = out_root / "{}-{}".format(installation.release, stamp)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -444,6 +468,19 @@ def verify_one(
         )
     )
 
+    # ---- O-10 许可证类型（信息项，但直接影响产出能否用于论文）
+    verification.checks.append(
+        Check(
+            "O-10",
+            "许可证类型（试用版会在图上打水印）",
+            True,
+            "安装日志显示为试用版：导出的图带 demo 水印，不能直接用于论文或正式报告。"
+            if verification.trial
+            else "未发现试用版标记",
+            info=True,
+        )
+    )
+
     _write_evidence(verification, out_dir, artifacts)
     return verification
 
@@ -500,6 +537,15 @@ def render_report(verification: Verification) -> str:
         "",
     ]
 
+    if verification.trial:
+        lines += [
+            "> **注意：本次验证使用试用版 Origin。**",
+            "> 自动化链路已经跑通（坐标轴、曲线、图例均正确），但试用版会在每张图上",
+            "> 平铺 `demo` 水印，这些图不能直接用于论文或正式报告。",
+            "> 需要不带水印的产出，请换用学校站点授权或正式许可证的 Origin 重跑一次。",
+            "",
+        ]
+
     if verification.error is not None:
         lines += [
             "## 失败原因",
@@ -547,6 +593,11 @@ def render_report(verification: Verification) -> str:
             "3. 把本目录（含 `verification.json`、`verification.md`、`artifacts/`）"
             "一起打包归档，作为该版本的验证证据。",
         ]
+        if verification.trial:
+            lines.append(
+                "4. 归档时注明：本次在**试用版**上验证；正式许可证环境尚未复验，"
+                "两者在绘图 API 上一致，但输出图不带水印这一点未验证。"
+            )
     else:
         lines += [
             "1. 看上面的「失败原因」或 FAIL 项，定位是环境问题还是代码问题。",

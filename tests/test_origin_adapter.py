@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -18,9 +19,11 @@ from electrochem_harness.origin_adapter import (
     ascii_runtime_root,
     detect_release,
     find_origin,
+    internal_version_from_orginfo,
     launch_origin,
     load_compatibility,
     render_launcher,
+    resolve_release,
     supported_releases,
 )
 
@@ -108,9 +111,15 @@ class OriginLocatorTests(unittest.TestCase):
                 target.write_bytes(b"")
                 candidates.append(str(target))
 
-            installation = find_origin(
-                PROJECT_ROOT, None, extra_candidates=candidates, search_drives=()
-            )
+            # 注册表扫描必须屏蔽：开发机或 CI 机器上可能真的装了 Origin，
+            # 那样 find_origin 会选中本机的更新版本，这条断言就与机器状态相关了。
+            with patch(
+                "electrochem_harness.origin_adapter._registry_candidates",
+                return_value=(),
+            ):
+                installation = find_origin(
+                    PROJECT_ROOT, None, extra_candidates=candidates, search_drives=()
+                )
 
             self.assertEqual(installation.release, "2025")
 
@@ -122,10 +131,82 @@ class OriginLocatorTests(unittest.TestCase):
             candidate = folder / "Origin64.exe"
             candidate.write_bytes(b"")
 
-            with self.assertRaises(OriginNotFound):
-                find_origin(
-                    PROJECT_ROOT, None, extra_candidates=[str(candidate)], search_drives=()
-                )
+            with patch(
+                "electrochem_harness.origin_adapter._registry_candidates",
+                return_value=(),
+            ):
+                with self.assertRaises(OriginNotFound):
+                    find_origin(
+                        PROJECT_ROOT,
+                        None,
+                        extra_candidates=[str(candidate)],
+                        search_drives=(),
+                    )
+
+
+class ReleaseResolutionTests(unittest.TestCase):
+    """用户可以把 Origin 装在任意目录，此时路径里没有年份。
+
+    安装目录与 ``orginfo.txt`` 里只有内部版本号（``Ir103bSr2_243`` 即 10.3b），
+    而配置与报告使用的是年份（2026b），两者必须能换算。
+    """
+
+    def test_parses_internal_version_strings(self):
+        cases = {
+            "Ir103bSr2_243": "10.3b",
+            "Ir103": "10.3",
+            "Ir100Sr0": "10.0",
+            "Ir98Sr0": "9.8",
+            "Ir95b": "9.5b",
+            "garbage": None,
+            "": None,
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(internal_version_from_orginfo(raw), expected)
+
+    def test_custom_install_directory_is_resolved_from_orginfo(self):
+        with tempfile.TemporaryDirectory() as temp:
+            # 目录名完全不含年份，正是 D:\hjp\origin 那种情况。
+            install = Path(temp) / "origin"
+            install.mkdir()
+            exe = install / "Origin64.exe"
+            exe.write_bytes(b"")
+            (install / "orginfo.txt").write_text("Ir103bSr2_243", encoding="ascii")
+
+            self.assertEqual(
+                resolve_release(exe, ("2023", "2026", "2026b")), "2026b"
+            )
+
+    def test_directory_name_wins_over_orginfo(self):
+        with tempfile.TemporaryDirectory() as temp:
+            install = Path(temp) / "Origin2023"
+            install.mkdir()
+            exe = install / "Origin64.exe"
+            exe.write_bytes(b"")
+            (install / "orginfo.txt").write_text("Ir103bSr2_243", encoding="ascii")
+
+            self.assertEqual(resolve_release(exe, ("2023", "2026b")), "2023")
+
+    def test_unknown_release_is_not_guessed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            install = Path(temp) / "origin"
+            install.mkdir()
+            exe = install / "Origin64.exe"
+            exe.write_bytes(b"")
+
+            self.assertIsNone(resolve_release(exe, ("2026b",)))
+
+    def test_release_outside_supported_range_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            install = Path(temp) / "origin"
+            install.mkdir()
+            exe = install / "Origin64.exe"
+            exe.write_bytes(b"")
+            (install / "orginfo.txt").write_text("Ir97Sr0", encoding="ascii")
+
+            # 9.7 对应 2020，不在 2021–2026b 范围内。
+            self.assertIsNone(resolve_release(exe, ("2026b",)))
 
 
 class OriginJobTests(unittest.TestCase):
