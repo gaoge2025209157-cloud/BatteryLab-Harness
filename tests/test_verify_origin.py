@@ -246,6 +246,18 @@ class CmdEncodingTests(unittest.TestCase):
                     ),
                 )
 
+    def test_entry_script_uses_crlf(self):
+        """用了 ``goto`` 的批处理必须是 CRLF 换行。
+
+        .gitattributes 已声明 ``*.cmd text eol=crlf``，但用编辑器直接写文件会绕过
+        它。纯 LF 的批处理在部分 Windows 版本上 label 匹配失败，表现为 goto 之后
+        整段不执行——症状很像"脚本跑到一半就退了"。
+        """
+
+        data = (PROJECT_ROOT / "verify_origin.cmd").read_bytes()
+        lf_only = data.count(b"\n") - data.count(b"\r\n")
+        self.assertEqual(lf_only, 0, "{} 行只有 LF 换行".format(lf_only))
+
     def test_launcher_does_not_set_variables_inside_parenthesised_blocks(self):
         """在 ``if (...)`` 块里 set 的变量，块内展开为空，命令会静默失败。"""
 
