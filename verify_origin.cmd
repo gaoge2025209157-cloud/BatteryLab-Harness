@@ -1,70 +1,109 @@
 @echo off
+rem ---------------------------------------------------------------------------
+rem  This file must stay pure ASCII.
+rem
+rem  cmd.exe decodes a .cmd file with the active OEM/ANSI code page (936 on
+rem  Chinese Windows). UTF-8 Chinese text therefore turns into mojibake and the
+rem  broken fragments get executed as commands. All Chinese output is produced by
+rem  verify_origin.py instead: CPython on Windows writes to the console through
+rem  the Unicode API, so it is unaffected by the code page.
+rem ---------------------------------------------------------------------------
 setlocal
 cd /d "%~dp0"
 
-echo ================================================================
-echo  Origin 真机验证
-echo ================================================================
-echo.
-echo  本脚本会列出本机所有受支持的 Origin，然后对每个版本各跑
-echo  一次完整流程，并逐条自检产物是否真的生成。
-echo.
-echo  全程不联网，不会发送任何实验数据。
-echo.
-
+rem Resolve the interpreter with labels instead of setting a variable inside an
+rem "if (...)" block: variables assigned inside a parenthesised block are expanded
+rem before the block runs, which silently produces an empty command line.
 where py >nul 2>nul
-if not errorlevel 1 (
-    set "PYCMD=py -3"
-    goto :found
-)
+if not errorlevel 1 goto :use_py
 where python >nul 2>nul
-if not errorlevel 1 (
-    set "PYCMD=python"
-    goto :found
-)
-echo [错误] 未找到 Python 3.10 或更新版本。
-echo        请先安装 Python（勾选 Add to PATH），然后重新运行本脚本。
+if not errorlevel 1 goto :use_python
+goto :no_python
+
+:use_py
+set "PYCMD=py -3"
+goto :run
+
+:use_python
+set "PYCMD=python"
+goto :run
+
+:no_python
+echo.
+echo [ERROR] Python 3.10 or newer was not found.
+echo         Install Python and tick "Add python.exe to PATH",
+echo         then run this file again.
+echo.
 pause
 exit /b 1
 
-:found
-echo ---------------- 第一步：本机有哪些 Origin ----------------
+:run
+echo.
+echo ===============================================================
+echo  Step 1 of 2: Origin installations found on this machine
+echo ===============================================================
 echo.
 %PYCMD% "%~dp0verify_origin.py" --list
-if errorlevel 1 goto :failed
 
 echo.
-echo ---------------- 第二步：逐个版本验证 ----------------
+echo ===============================================================
+echo  Step 2 of 2: run one full workflow per version
+echo ===============================================================
 echo.
-echo  每个版本大约需要 10-60 秒（含 Origin 启动时间），请勿关闭窗口。
+echo  Each version may take 10 to 60 seconds including Origin startup.
+echo  Do not close this window.
 echo.
 %PYCMD% "%~dp0verify_origin.py" --all
+
+rem Exit code 2 means "no usable Origin found" - that is an environment
+rem problem, not a quality failure, so it gets its own message.
+if errorlevel 2 goto :no_origin
 if errorlevel 1 goto :failed
 
 echo.
-echo ================================================================
-echo  全部版本验证通过
-echo ================================================================
+echo ---------------------------------------------------------------
+echo  All listed versions passed.
+echo ---------------------------------------------------------------
 echo.
-echo  产出目录：%~dp0origin_verification\
+echo  Results folder:
+echo    %~dp0origin_verification\
 echo.
-echo  请把整个 origin_verification 文件夹打包发给开发者，
-echo  并打开 artifacts 里的两张图，确认字体没有乱码、坐标轴单位正确。
+echo  Next:
+echo    1. Send the whole origin_verification folder to the developer.
+echo    2. Open the two PNG files under artifacts\ and check by eye that
+echo       fonts are not garbled and axis units are correct.
 echo.
 pause
 exit /b 0
 
+:no_origin
+echo.
+echo ---------------------------------------------------------------
+echo  No usable Origin installation was found.
+echo ---------------------------------------------------------------
+echo.
+echo  Nothing was verified, and no result folder was written.
+echo.
+echo  What to do:
+echo    1. Confirm Origin 2021 or newer (64-bit) is installed.
+echo    2. Run   verify_origin.py --list   to see what was detected.
+echo    3. If Origin is installed somewhere unusual, pass the full path:
+echo         verify_origin.py --origin-exe "C:\path\to\Origin64.exe"
+echo.
+pause
+exit /b 2
+
 :failed
 echo.
-echo ================================================================
-echo  有版本未通过
-echo ================================================================
+echo ---------------------------------------------------------------
+echo  At least one version did not pass.
+echo ---------------------------------------------------------------
 echo.
-echo  请打开下面目录里最新的 verification.md 查看具体是哪一条没过：
+echo  Open the newest verification.md under:
 echo    %~dp0origin_verification\
 echo.
-echo  把整个 origin_verification 文件夹打包发给开发者即可，
-echo  里面包含了定位问题需要的全部信息。
+echo  It lists every check with PASS / FAIL and the reason.
+echo  Send the whole origin_verification folder to the developer.
 echo.
 pause
 exit /b 1

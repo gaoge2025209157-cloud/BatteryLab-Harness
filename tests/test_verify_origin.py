@@ -224,5 +224,43 @@ class CommandLineTests(unittest.TestCase):
             self.assertIn("No supported Origin installation", message)
 
 
+class CmdEncodingTests(unittest.TestCase):
+    """批处理入口必须是纯 ASCII。
+
+    cmd.exe 按本地代码页（中文 Windows 是 936）解码 .cmd 文件本身，而不是按
+    UTF-8。把中文提示写进 .cmd 会变成乱码，乱码片段还会被当成命令执行，用户看到
+    的就是一连串"xxx 不是内部或外部命令"。中文提示一律交给 Python 输出——CPython
+    在 Windows 通过 Unicode 控制台 API 写屏，不受代码页影响。
+    """
+
+    def test_entry_scripts_are_pure_ascii(self):
+        for name in ("verify_origin.cmd", "start_gui.cmd"):
+            with self.subTest(script=name):
+                data = (PROJECT_ROOT / name).read_bytes()
+                offenders = [byte for byte in data if byte > 127]
+                self.assertEqual(
+                    offenders,
+                    [],
+                    "{} 含 {} 个非 ASCII 字节，cmd.exe 会解码成乱码并当成命令执行".format(
+                        name, len(offenders)
+                    ),
+                )
+
+    def test_launcher_does_not_set_variables_inside_parenthesised_blocks(self):
+        """在 ``if (...)`` 块里 set 的变量，块内展开为空，命令会静默失败。"""
+
+        text = (PROJECT_ROOT / "verify_origin.cmd").read_text(encoding="ascii")
+        for line in text.splitlines():
+            stripped = line.strip().lower()
+            # 只看赋值语句本身，注释与 label 不算。
+            if stripped.startswith("set ") and "pycmd" in stripped:
+                # 赋值必须在 label 之后、而非 if 块内部（缩进即代表块内）。
+                self.assertEqual(
+                    line,
+                    line.lstrip(),
+                    "PYCMD 的赋值不应出现在括号块内：{}".format(line),
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
