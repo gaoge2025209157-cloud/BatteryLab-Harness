@@ -356,7 +356,18 @@ class WizardOriginAndRetryTests(unittest.TestCase):
             )
             events = (second_run / "events.jsonl").read_text(encoding="utf-8")
             self.assertIn("retry_requested", events)
-            self.assertIn(str(first_run), events)
+            # 审计文件里存的是 JSON 转义后的路径：Windows 上反斜杠会变成 "\\"，
+            # 直接 assertIn(str(path)) 会因转义和分隔符差异而误判。
+            # 改为解析后比较 Path 对象，跨平台都成立。
+            retry_events = [
+                json.loads(line)
+                for line in events.splitlines()
+                if line.strip() and '"retry_requested"' in line
+            ]
+            self.assertEqual(len(retry_events), 1, "应恰好有一条重跑记录")
+            self.assertEqual(
+                Path(retry_events[0]["details"]["previous_run_dir"]), first_run
+            )
             self.assertTrue(any("retried" in item for item in wizard.history))
 
     def test_retry_requires_a_previous_execution(self):

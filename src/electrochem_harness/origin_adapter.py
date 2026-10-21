@@ -399,6 +399,21 @@ def ascii_runtime_root(candidates: Iterable[Optional[Path]]) -> Path:
     )
 
 
+def _ps_path(path) -> str:
+    """Render a path for PowerShell with forward slashes.
+
+    PowerShell accepts either separator, but forward slashes need no escaping in
+    single-quoted strings and stay identical across platforms, so the generated
+    launcher is stable and diffable.
+
+    ``str(WindowsPath)`` would emit backslashes on Windows and forward slashes on
+    POSIX, which makes the generated script depend on where it was produced and
+    forces every downstream comparison to deal with both forms.
+    """
+
+    return Path(path).as_posix()
+
+
 def _ps_quote(text: str) -> str:
     return "'" + str(text).replace("'", "''") + "'"
 
@@ -422,11 +437,11 @@ def render_launcher(
     return "\n".join(
         [
             "$ErrorActionPreference = 'Stop'",
-            "$originExe = " + _ps_quote(str(origin_exe)),
+            "$originExe = " + _ps_quote(_ps_path(origin_exe)),
             "$release = " + _ps_quote(release),
-            "$job = " + _ps_quote(str(job_path)),
-            "$script = " + _ps_quote(str(script_path)),
-            "$status = " + _ps_quote(str(status_path)),
+            "$job = " + _ps_quote(_ps_path(job_path)),
+            "$script = " + _ps_quote(_ps_path(script_path)),
+            "$status = " + _ps_quote(_ps_path(status_path)),
             "$timeout = " + str(int(timeout_seconds)),
             "if (Test-Path -LiteralPath $status) { Remove-Item -LiteralPath $status -Force }",
             "$running = Get-Process -Name 'Origin64' -ErrorAction SilentlyContinue |",
