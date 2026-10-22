@@ -28,7 +28,14 @@ status_path = Path(job["status_path"])
 origin_release = runtime_value(
     "ELECTROCHEM_ORIGIN_RELEASE", "ec_release$", required=False
 ) or "unknown"
-originpro_version = str(getattr(op, "__version__", "unknown"))
+# originpro 没有 __version__ 属性，只能查包元数据；内嵌 Python 若未安装
+# dist-info 则退回 unknown，不硬猜。
+try:
+    from importlib.metadata import version as _package_version
+
+    originpro_version = str(_package_version("originpro"))
+except Exception:  # noqa: BLE001 - 版本取不到不该阻断绘图
+    originpro_version = str(getattr(op, "__version__", "unknown"))
 compatibility_warnings = []
 
 

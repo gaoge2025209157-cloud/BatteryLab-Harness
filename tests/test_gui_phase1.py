@@ -118,14 +118,20 @@ class Phase1GuiControllerTests(unittest.TestCase):
             with self.assertRaises(ApprovalRequired):
                 controller.approve()
 
-    def test_origin_adapter_gap_is_an_explicit_degradation_not_lost_local_work(self):
+    def test_origin_failure_is_an_explicit_degradation_not_lost_local_work(self):
         from electrochem_harness.gui_phase1 import Phase1GuiController
+        from electrochem_harness.origin_adapter import OriginPlotFailed
+
+        def failing_launcher(*args, **kwargs):
+            raise OriginPlotFailed("Origin is not installed on this machine")
 
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = root / "curve.csv"
             write_capacity_curve(source)
-            controller = Phase1GuiController(PROJECT_ROOT)
+            controller = Phase1GuiController(
+                PROJECT_ROOT, origin_launcher=failing_launcher
+            )
             controller.prepare(values(source, root / "result", origin=True))
             controller.approve()
 
@@ -134,6 +140,65 @@ class Phase1GuiControllerTests(unittest.TestCase):
             self.assertEqual(result.state, WorkflowState.COMPLETED_WITH_WARNINGS)
             self.assertTrue((result.run_dir / "artifacts" / "关键参数报告.md").is_file())
             self.assertEqual(result.degradations[0].tool_id, "build_origin_project")
+            self.assertIn("Origin is not installed", result.degradations[0].reason)
+
+    def test_origin_success_records_project_figures_and_compatibility_warnings(self):
+        import json as json_module
+
+        from electrochem_harness.gui_phase1 import Phase1GuiController
+        from electrochem_harness.origin_adapter import OriginStatus
+
+        def fake_launcher(job_path, project_root, **kwargs):
+            output = Path(job_path).parent
+            for name in ("电化学分析.opju", "充放电曲线.png", "循环性能.png"):
+                (output / name).write_bytes(b"origin-stub")
+            (output / "origin_status.json").write_text(
+                json_module.dumps(
+                    {
+                        "ok": True,
+                        "project": str(output / "电化学分析.opju"),
+                        "origin_release": "2026b",
+                        "originpro_version": "1.2.3",
+                        "compatibility_warnings": ["save_fig(width=...) is unavailable"],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            return OriginStatus(
+                ok=True,
+                project=str(output / "电化学分析.opju"),
+                origin_release="2026b",
+                originpro_version="1.2.3",
+                warnings=("save_fig(width=...) is unavailable",),
+            )
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "curve.csv"
+            write_capacity_curve(source)
+            controller = Phase1GuiController(
+                PROJECT_ROOT, origin_launcher=fake_launcher
+            )
+            controller.prepare(values(source, root / "result", origin=True))
+            controller.approve()
+
+            result = controller.execute()
+
+            self.assertEqual(result.state, WorkflowState.COMPLETED)
+            artifacts = result.run_dir / "artifacts"
+            for name in ("电化学分析.opju", "充放电曲线.png", "循环性能.png", "origin_status.json"):
+                self.assertTrue((artifacts / name).is_file(), name)
+            self.assertEqual(
+                result.outputs["build_origin_project"]["origin_release"], "2026b"
+            )
+            record = json_module.loads(
+                (result.run_dir / "run_record.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(
+                any("save_fig" in warning for warning in record["warnings"]), record["warnings"]
+            )
+            self.assertEqual(record["degradations"], [])
 
     def test_raw_four_column_mode_generates_controlled_local_report(self):
         from electrochem_harness.gui_phase1 import Phase1GuiController
@@ -175,7 +240,10 @@ class Phase1GuiControllerTests(unittest.TestCase):
                 "records": [],
                 "limitations": ["mocked for deterministic test"],
             }
-            with patch("electrochem_harness.gui_phase1.search_crossref", return_value=response):
+            with patch(
+                "electrochem_harness.production_registry.search_crossref",
+                return_value=response,
+            ):
                 result = controller.execute()
 
             self.assertEqual(result.state, WorkflowState.COMPLETED)

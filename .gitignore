@@ -35,6 +35,9 @@ release/
 *.zip
 *.zip.sha256
 
+# Origin 真机验证的产出（包含工程文件、图片和本机路径，不进版本库）
+origin_verification/
+
 # Editor and operating-system files
 .vscode/
 .idea/
