@@ -115,6 +115,54 @@ def set_plot_style(plot, color, dashed=False):
         set_plot_property_compat(plot, "line.style", 1, "int")
 
 
+def set_scatter_style(plot, color, symbol_kind, open_symbol=False):
+    """Use distinct symbol geometry so capacity series remain legible in grayscale."""
+    try:
+        plot.color = color
+    except (AttributeError, TypeError, ValueError):
+        compatibility_warnings.append("Scatter color was not accepted: {}".format(color))
+    set_plot_property_compat(plot, "line.connect", 0, "int")
+    set_plot_property_compat(plot, "symbol.kind", symbol_kind, "int")
+    set_plot_property_compat(plot, "symbol.size", 8, "float")
+    set_plot_property_compat(plot, "symbol.edgewidth", 1.4, "float")
+    set_plot_property_compat(plot, "symbol.interior", 0 if open_symbol else 1, "int")
+
+
+def set_efficiency_style(plot, color, symbol_kind=4):
+    """Plot independently calculated CE as a thin line with diamond markers."""
+    try:
+        plot.color = color
+    except (AttributeError, TypeError, ValueError):
+        compatibility_warnings.append("Efficiency color was not accepted: {}".format(color))
+    set_plot_property_compat(plot, "line.width", 1.8, "float")
+    set_plot_property_compat(plot, "symbol.kind", symbol_kind, "int")
+    set_plot_property_compat(plot, "symbol.size", 7, "float")
+    set_plot_property_compat(plot, "symbol.interior", 1, "int")
+
+
+def set_legend_text_compat(layer, text):
+    """Replace auto legends through the documented LabTalk legend.text$ property."""
+    custom_text = " " + text
+    layer.activate()
+    setter = getattr(op, "set_lt_str", None)
+    if setter is not None:
+        try:
+            setter("ec_legend$", custom_text)
+            op.lt_exec('legend.text$="";legend.text$=ec_legend$;')
+            return
+        except (AttributeError, TypeError, ValueError):
+            pass
+    try:
+        legend = layer.label("Legend")
+        if legend is None:
+            compatibility_warnings.append("Legend object was unavailable; auto legend retained")
+            return
+        legend.text = ""
+        legend.text = custom_text
+    except (AttributeError, TypeError, ValueError):
+        compatibility_warnings.append("Custom legend text was unavailable; auto legend retained")
+
+
 def write_status(ok, **extra):
     payload = {
         "ok": ok,
@@ -141,7 +189,15 @@ try:
     curve_sheet = op.new_sheet(type="w", lname="Charge_Discharge_Data")
     curve_graph = op.new_graph(template="line", lname="Charge_Discharge_Curves")
     curve_layer = curve_graph[0]
-    colors = ["#0072B2", "#D55E00", "#009E73", "#CC79A7"]
+    colors = [
+        "#0072B2", "#D55E00", "#009E73", "#CC79A7",
+        "#E69F00", "#56B4E9", "#000000", "#882255",
+    ]
+    cycle_numbers = sorted({cycle for cycle, _ in curves})
+    cycle_colors = {
+        cycle: colors[index % len(colors)] for index, cycle in enumerate(cycle_numbers)
+    }
+    legend_group = []
     axis_pattern = ""
     for index, key in enumerate(sorted(curves)):
         cycle, direction = key
@@ -162,12 +218,14 @@ try:
         plot = curve_layer.add_plot(
             curve_sheet, coly=ycol, colx=xcol, type="line"
         )
-        color = colors[(cycle - 1) % len(colors)]
-        set_plot_style(plot, color, dashed=(direction == "discharge"))
+        set_plot_style(plot, cycle_colors[cycle], dashed=(direction == "discharge"))
+        if direction == "charge":
+            legend_group.append(r"\l({}) Cycle {}".format(index + 1, cycle))
     curve_sheet.cols_axis(axis_pattern)
     curve_layer.axis("x").title = "Specific Capacity (mAh g\\+(−1))"
     curve_layer.axis("y").title = "Voltage (V)"
     curve_layer.rescale()
+    set_legend_text_compat(curve_layer, "\n".join(legend_group))
     style_layer(curve_layer)
     set_graph_antialias_compat(curve_graph)
 
@@ -202,12 +260,20 @@ try:
     cycling_graph = op.new_graph(template="DOUBLEY", lname="Cycling_Performance")
     left = cycling_graph[0]
     right = cycling_graph[1]
-    p1 = left.add_plot(summary_sheet, coly=1, colx=0, type="line")
-    p2 = left.add_plot(summary_sheet, coly=2, colx=0, type="line")
+    p1 = left.add_plot(summary_sheet, coly=1, colx=0, type="scatter")
+    p2 = left.add_plot(summary_sheet, coly=2, colx=0, type="scatter")
     p3 = right.add_plot(summary_sheet, coly=3, colx=0, type="line")
-    set_plot_style(p1, "#D55E00")
-    set_plot_style(p2, "#0072B2")
-    set_plot_style(p3, "#009E73")
+    set_scatter_style(p1, "#D55E00", symbol_kind=1, open_symbol=True)
+    set_scatter_style(p2, "#0072B2", symbol_kind=3, open_symbol=False)
+    set_efficiency_style(p3, "#009E73", symbol_kind=4)
+    cycling_legend = "\n".join(
+        [
+            r"\l(1.1) Charge Capacity",
+            r"\l(1.2) Discharge Capacity",
+            r"\l(2.1) Coulombic Efficiency",
+        ]
+    )
+    set_legend_text_compat(left, cycling_legend)
     left.axis("x").title = "Cycle Number"
     left.axis("y").title = "Specific Capacity (mAh g\\+(−1))"
     right.axis("y").title = "Coulombic Efficiency (%)"

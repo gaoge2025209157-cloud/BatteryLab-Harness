@@ -1,0 +1,36 @@
+{
+  "group_id": "batch-待填",
+  "experiment_metadata": {
+    "battery_system": "待填",
+    "active_material": "待填",
+    "cell_type": "待填",
+    "counter_electrode": "待填",
+    "test_current": "待填",
+    "temperature": "待填",
+    "normalization_basis": "待填",
+    "batch": "待填"
+  },
+  "cells": [
+    {
+      "cell_id": "cell-01",
+      "input_file": "cell-01.csv",
+      "active_mass_mg": null,
+      "excluded": false,
+      "exclusion_reason": ""
+    },
+    {
+      "cell_id": "cell-02",
+      "input_file": "cell-02.csv",
+      "active_mass_mg": null,
+      "excluded": false,
+      "exclusion_reason": ""
+    },
+    {
+      "cell_id": "cell-03",
+      "input_file": "cell-03.csv",
+      "active_mass_mg": null,
+      "excluded": false,
+      "exclusion_reason": ""
+    }
+  ]
+}

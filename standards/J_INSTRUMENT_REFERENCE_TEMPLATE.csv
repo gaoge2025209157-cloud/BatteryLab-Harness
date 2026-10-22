@@ -1,0 +1,2 @@
+case_id,cell_id,input_file_sha256,device_model,land_software_version,export_mode,current_sign_convention,time_column_definition,cycle,cycle_complete,active_mass_mg,normalization_basis,land_charge_capacity_mAh,land_discharge_capacity_mAh,land_charge_specific_capacity_mAh_g,land_discharge_specific_capacity_mAh_g,land_coulombic_efficiency_percent,land_capacity_retention_percent,land_average_charge_voltage_V,land_average_discharge_voltage_V,source_evidence,reviewer,reviewed_at,notes
+J-01-normal,cell-01,待填,待填,待填,待填,待填,待填,1,true,待填,待填,待填,待填,待填,待填,待填,待填,待填,待填,截图或导出文件位置,J,待填,待填

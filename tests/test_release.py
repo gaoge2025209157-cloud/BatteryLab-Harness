@@ -22,8 +22,16 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertIn("$AllowedDirectories", script)
         self.assertNotIn("Copy-Item (Join-Path $Root '*')", script)
         self.assertIn("experiences.jsonl", script)
+        self.assertIn("literature_knowledge.jsonl", script)
+        self.assertIn("literature_knowledge_template.md", script)
+        self.assertIn("literature_knowledge.md", script)
         self.assertIn("run_gui.py", script)
+        self.assertIn("run_phase2_validation.py", script)
+        self.assertIn("run_replicates.py", script)
+        self.assertIn("'standards'", script)
         self.assertIn("start_gui.cmd", script)
+        self.assertIn("RELEASE_NOTES_v0.6.0-rc1.md", script)
+        self.assertIn("TEAM_WORK_PACKAGES.md", script)
         self.assertIn("Get-FileHash", script)
 
     def test_release_documentation_exists_and_describes_optional_origin(self):
@@ -38,7 +46,7 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertNotIn("D:\\AI\\电化学智能实验Harness", guide)
 
     def test_release_metadata_exists(self):
-        self.assertEqual((PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip(), "0.4.0")
+        self.assertEqual((PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip(), "0.6.0-rc1")
         self.assertTrue((PROJECT_ROOT / "CHANGELOG.md").is_file())
         self.assertTrue((PROJECT_ROOT / "LICENSE.txt").is_file())
 
@@ -46,7 +54,9 @@ class ReleasePackagingTests(unittest.TestCase):
         ignore = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8")
         for private_pattern in (
             "outputs/", "data/", "raw_data/", ".kiro/",
-            "knowledge/experiences.jsonl", "*.opju", "release/",
+            "knowledge/experiences.jsonl", "knowledge/literature_knowledge.jsonl",
+            "knowledge/literature_knowledge.md",
+            "*.opju", "release/",
         ):
             self.assertIn(private_pattern, ignore)
         self.assertTrue((PROJECT_ROOT / "CONTRIBUTING.md").is_file())

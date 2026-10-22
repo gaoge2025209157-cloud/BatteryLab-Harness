@@ -1,23 +1,151 @@
 """Auditable electrochemical analysis and guidance harness."""
 
+from .approval import (
+    ApprovalExpired,
+    ApprovalIntegrityError,
+    ApprovalPlanMismatch,
+    ApprovalScopeError,
+    ApprovalStore,
+    create_approval,
+    revoke_approval,
+    validate_approval,
+)
+from .controlled_run import (
+    ControlledAnalysisRun,
+    ControlledRunResult,
+    Degradation,
+)
 from .guidance import run_harness, run_harness_points
 from .knowledge import ExperienceStore, KnowledgeBase
 from .land import LandImportConfig, LandImportResult, load_land_export
 from .land_curve import analyze_land_capacity_curve
 from .literature import ResearchProfile, collect_research_profile, search_crossref
-from .models import ExperimentContext
+from .markdown_knowledge import MarkdownLiteratureKnowledgeStore
+from .ground_truth import (
+    GroundTruthResult,
+    GroundTruthSuite,
+    evaluate_ground_truth,
+    load_ground_truth_suite,
+    run_ground_truth_suite,
+    scientific_release_ready,
+)
+from .replicates import (
+    ReplicateCell,
+    ReplicateGroup,
+    ReplicateResult,
+    analyze_replicates,
+    load_replicate_manifest,
+    run_replicate_manifest,
+    write_replicate_outputs,
+)
+from .scientific_standard import (
+    SCIENTIFIC_STANDARD_VERSION,
+    scientific_standard_hash,
+    scientific_standard_identity,
+    scientific_standard_manifest,
+)
+from .models import AnalysisPlan, ApprovalRecord, ExperimentContext
+from .planning import (
+    BlockingPreflightError,
+    PlanningError,
+    UnsafeNetworkFieldError,
+    build_analysis_plan,
+    verify_plan_hash,
+)
+from .tool_registry import (
+    CancellationToken,
+    ExecutionCancelled,
+    FailurePolicy,
+    ToolContext,
+    ToolNotAllowed,
+    ToolOutcome,
+    ToolRegistry,
+    ToolRegistrySealed,
+    ToolSpec,
+    ToolTimeout,
+)
+from .validation import (
+    ArtifactRecord,
+    ValidationIssue,
+    ValidationResult,
+    hash_file,
+    validate_run_outputs,
+)
+from .workflow import (
+    ApprovalRequired,
+    InvalidTransition,
+    PlanHashMismatch,
+    WorkflowState,
+    WorkflowStateMachine,
+)
 
 __all__ = [
+    "AnalysisPlan",
+    "ApprovalExpired",
+    "ApprovalIntegrityError",
+    "ApprovalPlanMismatch",
+    "ApprovalRecord",
+    "ApprovalRequired",
+    "ApprovalScopeError",
+    "ApprovalStore",
+    "ArtifactRecord",
+    "BlockingPreflightError",
+    "CancellationToken",
+    "ControlledAnalysisRun",
+    "ControlledRunResult",
+    "Degradation",
+    "ExecutionCancelled",
     "ExperimentContext",
     "ExperienceStore",
+    "FailurePolicy",
+    "InvalidTransition",
     "KnowledgeBase",
     "LandImportConfig",
     "LandImportResult",
+    "MarkdownLiteratureKnowledgeStore",
+    "PlanHashMismatch",
+    "PlanningError",
     "ResearchProfile",
+    "ToolContext",
+    "ToolNotAllowed",
+    "ToolOutcome",
+    "ToolRegistry",
+    "ToolRegistrySealed",
+    "ToolSpec",
+    "ToolTimeout",
+    "UnsafeNetworkFieldError",
+    "ValidationIssue",
+    "ValidationResult",
+    "WorkflowState",
+    "WorkflowStateMachine",
     "analyze_land_capacity_curve",
+    "build_analysis_plan",
     "collect_research_profile",
+    "create_approval",
+    "hash_file",
     "load_land_export",
+    "revoke_approval",
     "run_harness",
     "run_harness_points",
     "search_crossref",
+    "validate_approval",
+    "validate_run_outputs",
+    "verify_plan_hash",
+    "GroundTruthResult",
+    "GroundTruthSuite",
+    "ReplicateCell",
+    "ReplicateGroup",
+    "ReplicateResult",
+    "SCIENTIFIC_STANDARD_VERSION",
+    "analyze_replicates",
+    "evaluate_ground_truth",
+    "load_ground_truth_suite",
+    "load_replicate_manifest",
+    "run_ground_truth_suite",
+    "run_replicate_manifest",
+    "scientific_release_ready",
+    "scientific_standard_hash",
+    "scientific_standard_identity",
+    "scientific_standard_manifest",
+    "write_replicate_outputs",
 ]

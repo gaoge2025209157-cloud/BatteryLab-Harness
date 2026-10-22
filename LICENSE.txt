@@ -1,5 +1,5 @@
 ElectrochemHarness — Research Preview License Notice
-Version 0.4.0
+Version 0.5.0-rc1
 
 No open-source license has been selected for this research preview.
 The distributor may share this package with named collaborators for evaluation,

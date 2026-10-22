@@ -30,6 +30,18 @@ def main(argv=None):
     parser.add_argument("--guided", action="store_true", help="Interactively ask for all comparison metadata")
     parser.add_argument("--search-literature", action="store_true", help="Search Crossref and recheck every retained DOI")
     parser.add_argument("--max-literature", type=int, default=50, help="Maximum candidate DOIs to verify (default: 50)")
+    parser.add_argument(
+        "--literature-knowledge",
+        type=Path,
+        default=None,
+        help="Optional legacy append-only DOI audit store (not used as the editable judgment basis)",
+    )
+    parser.add_argument(
+        "--knowledge-markdown",
+        type=Path,
+        default=ROOT / "knowledge" / "literature_knowledge.md",
+        help="Human-editable DOI knowledge used by later analyses after approval",
+    )
     parser.add_argument("--battery-system")
     parser.add_argument("--active-material")
     parser.add_argument("--cell-type")
@@ -56,6 +68,8 @@ def main(argv=None):
         research_profile=profile,
         search_literature=args.search_literature or args.guided,
         max_literature=max(1, min(args.max_literature, 200)),
+        literature_knowledge_path=args.literature_knowledge,
+        literature_markdown_path=args.knowledge_markdown,
     )
     for name, path in paths.items():
         print("{}={}".format(name, path))
