@@ -23,6 +23,7 @@ approve, run, cancel, or retry.
 
 from dataclasses import dataclass
 from enum import Enum
+import math
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
 
@@ -74,9 +75,8 @@ METADATA_FIELDS = (
     ("active_material", "活性物质", "例如：S/C复合正极、LiFePO4"),
     ("cell_type", "电池类型", "例如：半电池、全电池、对称电池"),
     ("counter_electrode", "对电极/另一电极", "例如：Li、Na、NMC811"),
-    ("test_current", "测试电流/倍率", "例如：100 mA g-1、0.1 C"),
-    ("temperature", "测试温度", "例如：25 C、60 C"),
-    ("normalization_basis", "质量归一化口径", "例如：硫质量、正极活性物质质量"),
+    ("test_current", "测试电流", "mA"),
+    ("temperature", "测试温度", "°C"),
 )
 
 SUPPORTED_EXTENSIONS = {".csv", ".txt", ".tsv", ".dat"}
@@ -107,6 +107,22 @@ def validate_form(values: Mapping[str, Any]) -> Tuple[str, ...]:
         for name, label, _hint in METADATA_FIELDS:
             if _missing(values.get(name)):
                 errors.append("启用文献检索时必须填写：{}。".format(label))
+    for name, label, unit in (
+        ("test_current", "测试电流", "mA"),
+        ("temperature", "测试温度", "°C"),
+    ):
+        value = str(values.get(name, "")).strip()
+        if value and not _missing(value):
+            try:
+                number = float(value)
+                if not math.isfinite(number):
+                    raise ValueError
+                if name == "test_current" and number <= 0:
+                    raise ValueError
+                if name == "temperature" and number <= -273.15:
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append("{}只填写数值，单位固定为{}。".format(label, unit))
     try:
         maximum = int(values.get("max_literature", 50))
         if maximum < 1 or maximum > 200:
@@ -116,6 +132,9 @@ def validate_form(values: Mapping[str, Any]) -> Tuple[str, ...]:
     origin_exe = str(values.get("origin_exe", "")).strip()
     if values.get("use_origin") and origin_exe and not Path(origin_exe).is_file():
         errors.append("指定的 Origin64.exe 不存在；可清空该项让程序自动查找。")
+    plot_mode = str(values.get("origin_plot_mode", "both") or "both").strip().casefold()
+    if values.get("use_origin") and plot_mode not in {"curve", "cycling", "both"}:
+        errors.append("请选择充放电曲线图、循环库仑效率图或两张都画。")
     return tuple(errors)
 
 
@@ -450,6 +469,7 @@ class SixStepWizard:
         report = [
             entry(name)
             for name in (
+                "关键结论.txt",
                 "关键参数报告.md",
                 "关键参数.csv",
                 "完整分析.json",
@@ -459,7 +479,8 @@ class SixStepWizard:
             )
         ]
         evidence = [entry(name, network_enabled) for name in NETWORK_ARTIFACTS]
-        origin = [entry(name, origin_enabled) for name in ORIGIN_ARTIFACTS]
+        expected = set(() if plan is None else plan.expected_artifacts)
+        origin = [entry(name, origin_enabled and name in expected) for name in ORIGIN_ARTIFACTS]
         audit = [
             ResultEntry(name, run_dir / name)
             for name in (

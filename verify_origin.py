@@ -234,8 +234,8 @@ def _form_values(source: Path, output_dir: Path, origin_exe: Path) -> Dict[str, 
         "active_material": "S/C composite",
         "cell_type": "coin cell",
         "counter_electrode": "Li",
-        "test_current": "0.2 C",
-        "temperature": "25 C",
+        "test_current": "0.2",
+        "temperature": "25",
         "normalization_basis": "sulfur mass",
     }
 

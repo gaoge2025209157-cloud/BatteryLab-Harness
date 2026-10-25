@@ -83,6 +83,7 @@ class OriginJob:
     status_path: Path
     selected_cycles: Tuple[int, ...] = ()
     representative_cycle_limit: int = 8
+    plot_mode: str = "both"
 
     REQUIRED_KEYS = (
         "curves_csv",
@@ -113,6 +114,9 @@ class OriginJob:
         limit = payload.get("representative_cycle_limit", 8)
         if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
             raise OriginJobError("origin_job.json representative_cycle_limit is invalid.")
+        plot_mode = str(payload.get("plot_mode", "both") or "both").strip().casefold()
+        if plot_mode not in {"curve", "cycling", "both"}:
+            raise OriginJobError("origin_job.json plot_mode must be curve, cycling, or both.")
         return cls(
             curves_csv=Path(payload["curves_csv"]),
             summary_csv=Path(payload["summary_csv"]),
@@ -122,6 +126,7 @@ class OriginJob:
             status_path=Path(payload["status_path"]),
             selected_cycles=tuple(int(item) for item in cycles),
             representative_cycle_limit=limit,
+            plot_mode=plot_mode,
         )
 
     @classmethod
@@ -148,15 +153,17 @@ class OriginJob:
             "status_path": str(self.status_path),
             "selected_cycles": list(self.selected_cycles),
             "representative_cycle_limit": self.representative_cycle_limit,
+            "plot_mode": self.plot_mode,
         }
 
     def expected_outputs(self) -> Tuple[Path, ...]:
-        return (
-            self.project_path,
-            self.curve_png,
-            self.cycling_png,
-            self.status_path,
-        )
+        outputs = [self.project_path]
+        if self.plot_mode in {"curve", "both"}:
+            outputs.append(self.curve_png)
+        if self.plot_mode in {"cycling", "both"}:
+            outputs.append(self.cycling_png)
+        outputs.append(self.status_path)
+        return tuple(outputs)
 
 
 @dataclass(frozen=True)

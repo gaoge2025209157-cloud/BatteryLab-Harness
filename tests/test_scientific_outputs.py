@@ -91,6 +91,7 @@ class ScientificOutputSpecificationTests(unittest.TestCase):
                     "journal": "Journal of Verified Batteries",
                     "year": 2025,
                     "doi": "10.1000/solid-state",
+
                     "doi_verified": True,
                     "match_level": "direct",
                     "metrics": {
@@ -127,6 +128,57 @@ class ScientificOutputSpecificationTests(unittest.TestCase):
         self.assertIn("set_scatter_style(p2", source)
         self.assertIn("set_efficiency_style(p3", source)
         self.assertIn("legend_group", source)
+
+
+class ReadableDecisionSummaryTests(unittest.TestCase):
+    def test_summary_is_plain_text_concise_and_cites_basis_with_doi(self):
+        from electrochem_harness.literature import ResearchProfile
+        from electrochem_harness.sci_report import render_readable_summary
+
+        payload = {
+            "report": {
+                "status": "ok",
+                "cycles": [{
+                    "cycle": 1,
+                    "charge_specific_capacity_mAh_g": 1000.0,
+                    "discharge_specific_capacity_mAh_g": 900.0,
+                    "coulombic_efficiency": 0.90,
+                    "capacity_retention": 1.0,
+                    "average_charge_voltage_V": 2.5,
+                    "average_discharge_voltage_V": 1.7,
+                    "complete": True,
+                }],
+                "quality_issues": [],
+            }
+        }
+        profile = ResearchProfile(
+            battery_system="halide solid-state battery",
+            active_material="Li3ScCl6 composite cathode",
+            cell_type="half cell",
+            counter_electrode="Li-In",
+            test_current="0.1 C",
+            temperature="25 C",
+            normalization_basis="active material mass",
+        )
+        literature = {
+            "records": [{
+                "title": "Verified interface benchmark",
+                "doi": "10.1000/interface",
+                "doi_verified": True,
+                "match_level": "direct",
+                "metrics": {"specific_capacity_mAh_g": 800.0},
+            }]
+        }
+        text = render_readable_summary(payload, profile, literature)
+
+        for heading in ("关键指标", "简要结论与科学依据", "实验数据能说明什么", "下一步怎么做"):
+            self.assertIn(heading, text)
+        self.assertIn("依据：", text)
+        self.assertIn("参考文献：", text)
+        self.assertIn("10.1000/interface", text)
+        self.assertNotIn("**", text)
+        self.assertNotIn("##", text)
+        self.assertLessEqual(len(text.splitlines()), 28)
 
 
 if __name__ == "__main__":

@@ -108,6 +108,33 @@ from .production_registry import (
     build_production_registry,
     tool_declarations,
 )
+from .academic_search import (
+    AcademicSearchRequest,
+    AdvancedSearchPlan,
+    build_advanced_search_plan,
+    open_guided_search_pages,
+    parse_concept_groups,
+    search_public_metadata,
+)
+from .fulltext import DataSummary, DocumentEvidence, extract_html_evidence, summarize_data_file
+from .knowledge_assistant import (
+    KnowledgeAssistantRequest,
+    KnowledgeAssistantRunResult,
+    ResearchKnowledgeStore,
+    build_evidence_packet,
+    run_knowledge_assistant,
+    validate_reasoning_result,
+)
+from .llm_provider import LLMConfig, LLMResult, OpenAICompatibleProvider
+from .electrochemical_plots import (
+    PLOT_SPECS,
+    PlotDataError,
+    PlotResult,
+    PlotSpec,
+    PlotTable,
+    create_electrochemical_plot,
+    load_plot_table,
+)
 
 __all__ = [
     "AnalysisPlan",
@@ -201,4 +228,32 @@ __all__ = [
     "find_origin",
     "launch_origin",
     "tool_declarations",
+    # LLM-assisted academic knowledge workflow.
+    "AcademicSearchRequest",
+    "AdvancedSearchPlan",
+    "DataSummary",
+    "DocumentEvidence",
+    "KnowledgeAssistantRequest",
+    "KnowledgeAssistantRunResult",
+    "LLMConfig",
+    "LLMResult",
+    "OpenAICompatibleProvider",
+    "ResearchKnowledgeStore",
+    "build_advanced_search_plan",
+    "build_evidence_packet",
+    "extract_html_evidence",
+    "open_guided_search_pages",
+    "parse_concept_groups",
+    "run_knowledge_assistant",
+    "search_public_metadata",
+    "summarize_data_file",
+    "validate_reasoning_result",
+    # Literature-aligned electrochemical plot catalog.
+    "PLOT_SPECS",
+    "PlotDataError",
+    "PlotResult",
+    "PlotSpec",
+    "PlotTable",
+    "create_electrochemical_plot",
+    "load_plot_table",
 ]

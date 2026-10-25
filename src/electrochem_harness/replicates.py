@@ -316,7 +316,7 @@ def _replicate_svg(result: ReplicateResult) -> str:
         return (
             '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="650" viewBox="0 0 1000 650">'
             '<rect width="100%" height="100%" fill="white"/>'
-            '<text x="500" y="325" text-anchor="middle" font-family="Times New Roman" font-size="24">'
+            '<text x="500" y="325" text-anchor="middle" font-family="Arial" font-size="24">'
             'No complete specific-capacity replicate data</text></svg>\n'
         )
 
@@ -346,34 +346,34 @@ def _replicate_svg(result: ReplicateResult) -> str:
     lines = [
         '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="650" viewBox="0 0 1000 650">',
         '<rect width="100%" height="100%" fill="white"/>',
-        '<text x="500" y="34" text-anchor="middle" font-family="Times New Roman" font-size="24">Replicate discharge capacity</text>',
-        '<line x1="{0}" y1="{1}" x2="{2}" y2="{1}" stroke="black" stroke-width="3"/>'.format(left, top + plot_height, left + plot_width),
-        '<line x1="{0}" y1="{1}" x2="{0}" y2="{2}" stroke="black" stroke-width="3"/>'.format(left, top, top + plot_height),
+        '<text x="500" y="34" text-anchor="middle" font-family="Arial" font-size="24">Replicate discharge capacity</text>',
+        '<line x1="{0}" y1="{1}" x2="{2}" y2="{1}" stroke="black" stroke-width="1.2"/>'.format(left, top + plot_height, left + plot_width),
+        '<line x1="{0}" y1="{1}" x2="{0}" y2="{2}" stroke="black" stroke-width="1.2"/>'.format(left, top, top + plot_height),
     ]
     for tick in range(6):
         value = y_min + tick * (y_max - y_min) / 5.0
         y = y_position(value)
         lines.append('<line x1="{0}" y1="{1:.2f}" x2="{2}" y2="{1:.2f}" stroke="#dddddd" stroke-width="1"/>'.format(left, y, left + plot_width))
-        lines.append('<text x="{0}" y="{1:.2f}" text-anchor="end" dominant-baseline="middle" font-family="Times New Roman" font-size="18">{2:.4g}</text>'.format(left - 12, y, value))
+        lines.append('<text x="{0}" y="{1:.2f}" text-anchor="end" dominant-baseline="middle" font-family="Arial" font-size="18">{2:.4g}</text>'.format(left - 12, y, value))
     for item in selected:
         x = x_position(item.cycle)
-        lines.append('<line x1="{0:.2f}" y1="{1}" x2="{0:.2f}" y2="{2}" stroke="black" stroke-width="2"/>'.format(x, top + plot_height, top + plot_height + 8))
-        lines.append('<text x="{0:.2f}" y="{1}" text-anchor="middle" font-family="Times New Roman" font-size="18">{2}</text>'.format(x, top + plot_height + 32, item.cycle))
+        lines.append('<line x1="{0:.2f}" y1="{1}" x2="{0:.2f}" y2="{2}" stroke="black" stroke-width="1.5"/>'.format(x, top + plot_height, top + plot_height + 8))
+        lines.append('<text x="{0:.2f}" y="{1}" text-anchor="middle" font-family="Arial" font-size="18">{2}</text>'.format(x, top + plot_height + 32, item.cycle))
         if item.sample_sd is not None:
             high = y_position(item.mean + item.sample_sd)
             low = y_position(item.mean - item.sample_sd)
             lines.extend(
                 [
-                    '<line data-role="sd-error-bar" x1="{0:.2f}" y1="{1:.2f}" x2="{0:.2f}" y2="{2:.2f}" stroke="#222222" stroke-width="2"/>'.format(x, high, low),
-                    '<line x1="{0:.2f}" y1="{1:.2f}" x2="{2:.2f}" y2="{1:.2f}" stroke="#222222" stroke-width="2"/>'.format(x - 8, high, x + 8),
-                    '<line x1="{0:.2f}" y1="{1:.2f}" x2="{2:.2f}" y2="{1:.2f}" stroke="#222222" stroke-width="2"/>'.format(x - 8, low, x + 8),
+                    '<line data-role="sd-error-bar" x1="{0:.2f}" y1="{1:.2f}" x2="{0:.2f}" y2="{2:.2f}" stroke="#222222" stroke-width="1.5"/>'.format(x, high, low),
+                    '<line x1="{0:.2f}" y1="{1:.2f}" x2="{2:.2f}" y2="{1:.2f}" stroke="#222222" stroke-width="1.5"/>'.format(x - 8, high, x + 8),
+                    '<line x1="{0:.2f}" y1="{1:.2f}" x2="{2:.2f}" y2="{1:.2f}" stroke="#222222" stroke-width="1.5"/>'.format(x - 8, low, x + 8),
                 ]
             )
         ordered = sorted(item.raw_points, key=lambda point: point.cell_id)
         centre = (len(ordered) - 1) / 2.0
         for index, point in enumerate(ordered):
             offset = (index - centre) * 9.0
-            colour = "#999999" if not point.included else ("#d62728" if point.outlier_flag else "#1f77b4")
+            colour = "#999999" if not point.included else ("#E64B35" if point.outlier_flag else "#4DBBD5")
             lines.append(
                 '<circle data-cell="{}" cx="{:.2f}" cy="{:.2f}" r="5" fill="{}" fill-opacity="0.72" stroke="black" stroke-width="1"/>'.format(
                     point.cell_id.replace('"', ""), x_position(item.cycle, offset), y_position(point.value), colour
@@ -382,10 +382,10 @@ def _replicate_svg(result: ReplicateResult) -> str:
         lines.append('<rect x="{0:.2f}" y="{1:.2f}" width="10" height="10" fill="black" transform="translate(-5,-5)"/>'.format(x, y_position(item.mean)))
     lines.extend(
         [
-            '<text x="{0}" y="{1}" text-anchor="middle" font-family="Times New Roman" font-size="22">Cycle Number</text>'.format(left + plot_width / 2.0, height - 28),
-            '<text x="28" y="{0}" text-anchor="middle" font-family="Times New Roman" font-size="22" transform="rotate(-90 28 {0})">Specific Capacity (mAh g^-1)</text>'.format(top + plot_height / 2.0),
-            '<circle cx="720" cy="620" r="5" fill="#1f77b4" stroke="black"/><text x="734" y="626" font-family="Times New Roman" font-size="16">raw cell</text>',
-            '<rect x="825" y="615" width="10" height="10" fill="black"/><text x="842" y="626" font-family="Times New Roman" font-size="16">mean ± sample SD</text>',
+            '<text x="{0}" y="{1}" text-anchor="middle" font-family="Arial" font-size="22">Cycle Number</text>'.format(left + plot_width / 2.0, height - 28),
+            '<text x="28" y="{0}" text-anchor="middle" font-family="Arial" font-size="22" transform="rotate(-90 28 {0})">Specific Capacity (mAh g^-1)</text>'.format(top + plot_height / 2.0),
+            '<circle cx="720" cy="620" r="5" fill="#4DBBD5" stroke="black"/><text x="734" y="626" font-family="Arial" font-size="16">raw cell</text>',
+            '<rect x="825" y="615" width="10" height="10" fill="black"/><text x="842" y="626" font-family="Arial" font-size="16">mean ± sample SD</text>',
             '</svg>',
         ]
     )

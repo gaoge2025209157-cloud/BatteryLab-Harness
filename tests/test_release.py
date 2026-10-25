@@ -29,10 +29,16 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertIn("run_phase2_validation.py", script)
         self.assertIn("run_replicates.py", script)
         self.assertIn("'standards'", script)
+        self.assertIn("'docs'", script)
         self.assertIn("start_gui.cmd", script)
-        self.assertIn("RELEASE_NOTES_v0.6.0-rc1.md", script)
+        self.assertIn("start_gui_local_qwen_portable.cmd", script)
+        self.assertIn("START_HERE_WINDOWS.md", script)
+        self.assertIn("RELEASE_NOTES_v0.7.0-rc1.md", script)
         self.assertIn("TEAM_WORK_PACKAGES.md", script)
         self.assertIn("Get-FileHash", script)
+        self.assertTrue((PROJECT_ROOT / "src" / "electrochem_harness" / "electrochemical_plots.py").is_file())
+        self.assertTrue((PROJECT_ROOT / "src" / "electrochem_harness" / "gui_plots.py").is_file())
+        self.assertTrue((PROJECT_ROOT / "docs" / "电化学图谱与数据格式规范.md").is_file())
 
     def test_release_documentation_exists_and_describes_optional_origin(self):
         guide = (PROJECT_ROOT / "README_发布版.md").read_text(encoding="utf-8")
@@ -46,7 +52,7 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertNotIn("D:\\AI\\电化学智能实验Harness", guide)
 
     def test_release_metadata_exists(self):
-        self.assertEqual((PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip(), "0.6.0-rc1")
+        self.assertEqual((PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip(), "0.7.0-rc1")
         self.assertTrue((PROJECT_ROOT / "CHANGELOG.md").is_file())
         self.assertTrue((PROJECT_ROOT / "LICENSE.txt").is_file())
 

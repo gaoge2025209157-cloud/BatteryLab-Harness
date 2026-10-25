@@ -1,0 +1,4 @@
+frequency_Hz,z_real_ohm,z_imag_ohm
+100000,5,-1
+1000,10,-5
+10,20,-2

@@ -1,0 +1,3 @@
+cycle,charge_specific_capacity_mAh_g,discharge_specific_capacity_mAh_g,coulombic_efficiency_percent
+1,100,90,90
+2,95,88,92.63

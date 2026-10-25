@@ -23,13 +23,14 @@ def values(source, output, *, origin=False, network=False):
         "origin_exe": "",
         "search_literature": network,
         "use_origin": origin,
+        "origin_plot_mode": "both",
         "max_literature": 2,
         "battery_system": "Li-S",
         "active_material": "S/C",
         "cell_type": "coin cell",
         "counter_electrode": "Li",
-        "test_current": "0.2C",
-        "temperature": "25 C",
+        "test_current": "0.2",
+        "temperature": "25",
         "normalization_basis": "硫质量",
     }
 
@@ -174,15 +175,19 @@ class SixStepApprovalTests(DialogTestCase):
         dialog.go_next()
         self.assertEqual(dialog.wizard.step, WizardStep.APPROVAL)
 
-    def test_unchecking_a_mandatory_scope_disables_approval(self):
+    def test_all_mandatory_scopes_require_explicit_confirmation(self):
         with tempfile.TemporaryDirectory() as temp:
             root, dialog = self.make(values(SAMPLE, Path(temp) / "out"))
             self._to_approval(dialog)
+            self.assertEqual(str(dialog.approve_button.cget("state")), "disabled")
+
+            for scope in dialog.wizard.required_scopes:
+                dialog.scope_vars[scope].set(True)
+            dialog._refresh_approve_button()
             self.assertEqual(str(dialog.approve_button.cget("state")), "normal")
 
             dialog.scope_vars["formal_output"].set(False)
             dialog._refresh_approve_button()
-
             self.assertEqual(str(dialog.approve_button.cget("state")), "disabled")
             self.assertIn("formal_output", dialog.status.get())
 
@@ -211,6 +216,9 @@ class PlanInvalidationTests(DialogTestCase):
         with tempfile.TemporaryDirectory() as temp:
             root, dialog = self.make(values(SAMPLE, Path(temp) / "out"))
             self._to_approval(dialog)
+            for scope in dialog.wizard.required_scopes:
+                dialog.scope_vars[scope].set(True)
+            dialog._refresh_approve_button()
             self.assertEqual(str(dialog.approve_button.cget("state")), "normal")
 
             dialog.variables["max_literature"].set(9)
@@ -234,15 +242,34 @@ class PlanInvalidationTests(DialogTestCase):
             self.assertFalse(dialog._dirty)
 
     def test_plan_step_blocks_while_the_form_is_dirty(self):
+
         with tempfile.TemporaryDirectory() as temp:
             root, dialog = self.make(values(SAMPLE, Path(temp) / "out"))
             dialog.go_next()
             dialog.go_next()
             self.assertEqual(dialog.wizard.step, WizardStep.PLAN)
 
-            dialog.variables["test_current"].set("0.5 C")
+            dialog.variables["test_current"].set("0.5")
 
             self.assertEqual(str(dialog.next_button.cget("state")), "disabled")
+
+
+class OriginPlotChoiceTests(DialogTestCase):
+    def test_origin_choice_is_visible_and_only_selected_figure_is_expected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            form_values = values(SAMPLE, Path(temp) / "out", origin=True)
+            form_values["origin_plot_mode"] = "curve"
+            root, dialog = self.make(form_values)
+
+            self.assertEqual(dialog.variables["origin_plot_mode"].get(), "curve")
+            self.assertTrue(dialog.origin_plot_choice.winfo_exists())
+            dialog.go_next()
+            dialog.go_next()
+            plan = dialog.wizard.prepared.plan
+
+            self.assertIn("充放电曲线.png", plan.expected_artifacts)
+            self.assertNotIn("循环性能.png", plan.expected_artifacts)
+            self.assertEqual(plan.experiment_metadata["origin_plot_mode"], "curve")
 
 
 class SixStepExecutionTests(DialogTestCase):
@@ -253,6 +280,9 @@ class SixStepExecutionTests(DialogTestCase):
         self.assertEqual(
             dialog.wizard.step, WizardStep.APPROVAL, "未能进入第 4 步，请检查表单与预检查"
         )
+        for scope in dialog.wizard.required_scopes:
+            dialog.scope_vars[scope].set(True)
+        dialog._refresh_approve_button()
         dialog.approve_and_run()
         pump(root, dialog)
         self.assertIsNotNone(dialog.wizard.results, "执行没有产生结果，请检查 worker 异常")
@@ -404,6 +434,10 @@ class FooterWiringTests(DialogTestCase):
             # 窗口在测试里是 withdraw 状态，ismapped 恒为假，改用布局管理器判断
             self.assertEqual(dialog.next_button.winfo_manager(), "")
             self.assertEqual(dialog.approve_button.winfo_manager(), "grid")
+            self.assertEqual(str(dialog.approve_button.cget("state")), "disabled")
+            for scope in dialog.wizard.required_scopes:
+                dialog.scope_vars[scope].set(True)
+            dialog._refresh_approve_button()
             self.assertEqual(str(dialog.approve_button.cget("state")), "normal")
 
             dialog.approve_button.invoke()
@@ -441,7 +475,7 @@ class MainWindowEntryTests(unittest.TestCase):
         root.withdraw()
         try:
             app = ElectrochemApp(root, PROJECT_ROOT)
-            self.assertEqual(app.six_step_button.cget("text"), "六步受控分析")
+            self.assertEqual(app.six_step_button.cget("text"), "充放电 / 循环")
             self.assertTrue(callable(app.open_six_step))
         finally:
             app._cancel_polling()
@@ -455,9 +489,10 @@ class MainWindowEntryTests(unittest.TestCase):
         captured = {}
 
         class FakeDialog:
-            def __init__(self, parent, project_root, form_values):
+            def __init__(self, parent, project_root, form_values, on_complete=None):
                 captured["values"] = form_values
                 captured["root"] = project_root
+                captured["on_complete"] = on_complete
 
             def winfo_exists(self):
                 return 1
@@ -472,6 +507,7 @@ class MainWindowEntryTests(unittest.TestCase):
             self.assertEqual(captured["values"]["input_file"], "D:/data/cell.csv")
             self.assertEqual(captured["values"]["battery_system"], "Li-S")
             self.assertEqual(Path(captured["root"]), PROJECT_ROOT)
+            self.assertTrue(callable(captured["on_complete"]))
         finally:
             app._cancel_polling()
             root.destroy()

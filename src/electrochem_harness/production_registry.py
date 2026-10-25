@@ -26,10 +26,11 @@ from .markdown_knowledge import MarkdownLiteratureKnowledgeStore
 from .origin_adapter import (
     DEFAULT_TIMEOUT_SECONDS,
     OriginError,
+    OriginJob,
     OriginStatus,
     launch_origin,
 )
-from .sci_report import create_scientific_bundle
+from .sci_report import create_scientific_bundle, render_readable_summary
 from .scientific_standard import (
     scientific_standard_identity,
     scientific_standard_manifest,
@@ -80,12 +81,27 @@ class ToolchainInputs:
 
     @property
     def profile(self) -> ResearchProfile:
-        return ResearchProfile(
-            **{
-                key: str(self.values.get(key, "")).strip()
-                for key in RESEARCH_FIELDS
-            }
+        values = {
+            key: str(self.values.get(key, "")).strip()
+            for key in RESEARCH_FIELDS
+            if key not in {"test_current", "temperature", "normalization_basis"}
+        }
+        current = str(self.values.get("test_current", "")).strip()
+        temperature = str(self.values.get("temperature", "")).strip()
+        try:
+            values["test_current"] = "{:g} mA".format(float(current))
+        except (TypeError, ValueError):
+            values["test_current"] = current
+        try:
+            values["temperature"] = "{:g} °C".format(float(temperature))
+        except (TypeError, ValueError):
+            values["temperature"] = temperature
+        values["normalization_basis"] = (
+            "未归一化容量（mAh）"
+            if self.is_raw_current_curve
+            else "仪器文件导出的比容量口径（质量分母需由设备方法记录核验）"
         )
+        return ResearchProfile(**values)
 
     @property
     def max_literature(self) -> int:
@@ -155,7 +171,7 @@ def tool_declarations() -> Tuple[Mapping[str, Any], ...]:
             "failure_policy": "fail",
             "timeout_seconds": 180,
             "max_retries": 0,
-            "artifacts": ("关键参数报告.md", "关键参数.csv", "完整分析.json"),
+            "artifacts": ("关键结论.txt", "关键参数报告.md", "关键参数.csv", "完整分析.json"),
         },
         {
             "tool_id": "build_origin_project",
@@ -250,6 +266,7 @@ def build_production_registry(inputs: ToolchainInputs) -> ToolRegistry:
                 search_literature=False,
                 literature_knowledge_path=None,
                 literature_markdown_path=inputs.knowledge_markdown,
+                origin_plot_mode=str(inputs.values.get("origin_plot_mode", "both") or "both"),
             )
             artifacts = tuple(
                 path
@@ -257,6 +274,21 @@ def build_production_registry(inputs: ToolchainInputs) -> ToolRegistry:
                 if name != "knowledge_markdown" and Path(path).is_file()
             )
         report = context.output_dir / "关键参数报告.md"
+        evidence_path = context.output_dir / "文献证据.json"
+        literature_result = None
+        if evidence_path.is_file():
+            try:
+                literature_result = json.loads(evidence_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                literature_result = None
+        if not inputs.is_raw_current_curve:
+            conclusion = context.output_dir / "关键结论.txt"
+            conclusion.write_text(
+                render_readable_summary(inputs.analysis_payload, profile, literature_result),
+                encoding="utf-8",
+            )
+            if conclusion not in artifacts:
+                artifacts = tuple(artifacts) + (conclusion,)
         if "search_literature_metadata" in context.shared:
             with report.open("a", encoding="utf-8") as handle:
                 handle.write(
@@ -284,6 +316,10 @@ def build_production_registry(inputs: ToolchainInputs) -> ToolRegistry:
                 "该数据模式只生成绘图 CSV，尚未生成可执行的 Origin 作业；"
                 "报告与绘图 CSV 均已保留。"
             )
+        try:
+            job = OriginJob.from_dict(job_payload)
+        except OriginError as error:
+            raise OriginError("origin_job.json 无法读取：{}".format(error)) from error
 
         launcher = inputs.origin_launcher or launch_origin
         status = launcher(
@@ -293,11 +329,7 @@ def build_production_registry(inputs: ToolchainInputs) -> ToolRegistry:
             timeout_seconds=inputs.origin_timeout_seconds,
             checkpoint=context.checkpoint,
         )
-        artifacts = tuple(
-            Path(job_payload[key])
-            for key in ("project_path", "curve_png", "cycling_png", "status_path")
-            if job_payload.get(key)
-        )
+        artifacts = job.expected_outputs()
         return ToolOutcome(
             value={
                 "origin_release": status.origin_release,
@@ -387,6 +419,39 @@ def _write_raw_bundle(
         ),
         encoding="utf-8",
     )
+    conclusion = target / "关键结论.txt"
+    complete_metrics = [
+        item for item in metrics
+        if item.get("charge_capacity_mAh", 0) > 0 and item.get("discharge_capacity_mAh", 0) > 0
+    ]
+    conclusion_lines = [
+        "关键指标",
+        "完整循环：{} 圈；总循环记录：{} 圈".format(len(complete_metrics), len(metrics)),
+        "",
+        "简要结论与科学依据",
+    ]
+    if complete_metrics:
+        first, last = complete_metrics[0], complete_metrics[-1]
+        conclusion_lines.append(
+            "放电容量由 {:.4g} 变为 {:.4g} mAh。依据：按 Q = ∫|I|dt 对完整循环积分。".format(
+                first["discharge_capacity_mAh"], last["discharge_capacity_mAh"]
+            )
+        )
+    else:
+        conclusion_lines.append("当前不能评价循环趋势。依据：没有同时包含充电和放电的完整循环。")
+    conclusion_lines.extend([
+        "参考文献：四列模式本次未将文献摘要作为确定性依据，需在相同条件下单独核验DOI。",
+        "",
+        "实验数据能说明什么",
+        "可以说明：基于时间、电流和电压积分得到的容量与能量。",
+        "不能说明：单凭恒流数据不能确定阻抗、扩散系数或具体界面反应。",
+        "",
+        "下一步怎么做",
+        "1. 对照设备软件抽查一个完整循环的容量积分。",
+        "2. 补足至少3个同条件平行电池。",
+        "3. 在关键循环阶段补充EIS及循环前后结构、成分和界面表征。",
+    ])
+    conclusion.write_text("\n".join(conclusion_lines) + "\n", encoding="utf-8")
     summary = target / "关键参数.csv"
     fields = list(metrics[0]) if metrics else ["cycle"]
     with summary.open("w", encoding="utf-8-sig", newline="") as handle:
@@ -433,4 +498,4 @@ def _write_raw_bundle(
         ),
         encoding="utf-8",
     )
-    return report, summary, complete, standard, curves, job
+    return report, conclusion, summary, complete, standard, curves, job

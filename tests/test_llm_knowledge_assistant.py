@@ -1,0 +1,433 @@
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+
+class AcademicSearchPlanTests(unittest.TestCase):
+    def _request(self):
+        from electrochem_harness.academic_search import AcademicSearchRequest
+
+        return AcademicSearchRequest(
+            domain="卤化物固态电解质",
+            research_question="Li3ScCl6正极界面稳定性如何影响循环？",
+            concept_groups=(
+                ("halide solid electrolyte", "chloride electrolyte"),
+                ("cathode interface", "interfacial stability"),
+            ),
+            exact_phrases=("Li3ScCl6",),
+            exclusions=("liquid electrolyte",),
+            year_from=2020,
+            year_to=2026,
+            databases=(
+                "crossref",
+                "openalex",
+                "web_of_science",
+                "scopus",
+                "cnki",
+                "google_scholar",
+            ),
+            max_results=20,
+        )
+
+    def test_builds_stable_advanced_queries_for_major_databases(self):
+        from electrochem_harness.academic_search import build_advanced_search_plan
+
+        first = build_advanced_search_plan(self._request())
+        second = build_advanced_search_plan(self._request())
+        self.assertEqual(first.plan_hash, second.plan_hash)
+        self.assertIn("TS=(", first.database_queries["web_of_science"])
+        self.assertIn("TITLE-ABS-KEY(", first.database_queries["scopus"])
+        self.assertIn("Li3ScCl6", first.database_queries["cnki"])
+        self.assertIn("2020", first.database_queries["web_of_science"])
+        self.assertTrue(first.browser_urls["web_of_science"].startswith("https://"))
+        self.assertTrue(first.browser_urls["scopus"].startswith("https://"))
+        self.assertEqual(first.automatic_sources, ("crossref", "openalex"))
+
+    def test_opens_only_user_selected_guided_database_pages(self):
+        from electrochem_harness.academic_search import (
+            build_advanced_search_plan,
+            open_guided_search_pages,
+        )
+
+        opened = []
+        plan = build_advanced_search_plan(self._request())
+        result = open_guided_search_pages(plan, opener=lambda url: opened.append(url) or True)
+        self.assertEqual(set(result), {"web_of_science", "scopus", "cnki", "google_scholar"})
+        self.assertEqual(len(opened), 4)
+
+
+class FullTextEvidenceTests(unittest.TestCase):
+    def test_html_extractor_prioritizes_background_figures_and_tables(self):
+        from electrochem_harness.fulltext import extract_html_evidence
+
+        html = """
+        <html><body>
+          <h2>Introduction</h2>
+          <p>Halide solid electrolytes offer high ionic conductivity but cathode interfaces remain unstable.</p>
+          <h2>Results</h2>
+          <figure><figcaption>Figure 2. Conductivity reaches 2.1 mS cm-1 at 25 C.</figcaption></figure>
+          <table><tr><th>Pressure</th><th>Capacity</th></tr><tr><td>50 MPa</td><td>145 mAh g-1</td></tr></table>
+        </body></html>
+        """
+        evidence = extract_html_evidence(
+            html,
+            source_uri="https://example.invalid/paper",
+            title="Example",
+            doi="10.1000/example",
+        )
+        self.assertIn("cathode interfaces", evidence.background_excerpt)
+        joined = " ".join(evidence.figure_table_evidence)
+        self.assertIn("2.1 mS cm-1", joined)
+        self.assertIn("50 MPa", joined)
+        self.assertEqual(evidence.evidence_level, "fulltext_html")
+
+    def test_data_summary_removes_large_raw_arrays_and_is_bounded(self):
+        from electrochem_harness.fulltext import summarize_data_file
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "analysis.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "experiment_context": {"system": "halide"},
+                        "report": {"capacity": 120},
+                        "points": list(range(10000)),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            summary = summarize_data_file(path, max_chars=2000)
+        self.assertIn("capacity", summary.text)
+        self.assertNotIn("9999", summary.text)
+        self.assertLessEqual(len(summary.text), 2000)
+        self.assertIn("points", summary.omitted_fields)
+
+
+class LLMProviderTests(unittest.TestCase):
+    def test_openai_compatible_provider_returns_json_and_tracks_usage(self):
+        from electrochem_harness.llm_provider import LLMConfig, OpenAICompatibleProvider
+
+        captured = {}
+
+        def transport(url, headers, body, timeout):
+            captured.update(url=url, headers=headers, body=body, timeout=timeout)
+            return {
+                "choices": [{"message": {"content": "```json\n{\"summary\": \"ok\"}\n```"}}],
+                "usage": {"prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168},
+                "model": "test-model",
+            }
+
+        os.environ["TEST_ELECTROCHEM_LLM_KEY"] = "secret-value"
+        try:
+            provider = OpenAICompatibleProvider(
+                LLMConfig(
+                    base_url="https://llm.example.invalid/v1",
+                    model="test-model",
+                    api_key_env="TEST_ELECTROCHEM_LLM_KEY",
+                    max_tokens=1000,
+                ),
+                transport=transport,
+            )
+            result = provider.generate_json("system", {"input": "evidence"})
+        finally:
+            os.environ.pop("TEST_ELECTROCHEM_LLM_KEY", None)
+        self.assertEqual(result.payload["summary"], "ok")
+        self.assertEqual(result.total_tokens, 168)
+        self.assertEqual(captured["headers"]["Authorization"], "Bearer secret-value")
+        self.assertNotIn("secret-value", json.dumps(result.to_dict()))
+        self.assertEqual(captured["body"]["response_format"], {"type": "json_object"})
+
+    def test_cc_switch_uses_responses_without_reading_upstream_key(self):
+        from electrochem_harness.llm_provider import LLMConfig, OpenAICompatibleProvider
+
+        captured = {}
+
+        def transport(url, headers, body, timeout):
+            captured.update(url=url, headers=headers, body=body, timeout=timeout)
+            return {
+                "id": "resp_test",
+                "object": "response",
+                "status": "completed",
+                "model": "gpt-5.6-sol",
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {"type": "output_text", "text": "{\"summary\":\"ok\"}"}
+                        ],
+                    }
+                ],
+                "usage": {"input_tokens": 22, "output_tokens": 9, "total_tokens": 31},
+            }
+
+        os.environ.pop("ELECTROCHEM_LLM_API_KEY", None)
+        config = LLMConfig(
+            base_url="http://127.0.0.1:15721/v1",
+            model="gpt-5.6-sol",
+            max_tokens=1000,
+        )
+        provider = OpenAICompatibleProvider(config, transport=transport)
+        result = provider.generate_json("Return JSON.", {"input": "evidence"})
+
+        self.assertEqual(config.protocol, "responses")
+        self.assertEqual(config.auth_mode, "cc_switch")
+        self.assertEqual(captured["url"], "http://127.0.0.1:15721/v1/responses")
+        self.assertEqual(captured["headers"]["Authorization"], "Bearer PROXY_MANAGED")
+        self.assertEqual(captured["body"]["instructions"], "Return JSON.")
+        self.assertIn("evidence", captured["body"]["input"])
+        self.assertNotIn("messages", captured["body"])
+        self.assertEqual(result.payload, {"summary": "ok"})
+        self.assertEqual(result.total_tokens, 31)
+
+
+class KnowledgeAssistantTests(unittest.TestCase):
+    def _request(self, **overrides):
+        from electrochem_harness.academic_search import AcademicSearchRequest
+        from electrochem_harness.knowledge_assistant import KnowledgeAssistantRequest
+
+        search = AcademicSearchRequest(
+            domain="卤化物固态电解质",
+            research_question="界面阻抗增长是否限制循环？",
+            concept_groups=(("halide electrolyte", "chloride electrolyte"), ("interface",)),
+            databases=("crossref", "openalex", "web_of_science"),
+            max_results=5,
+        )
+        values = dict(search=search, max_documents=5, max_evidence_chars=20000)
+        values.update(overrides)
+        return KnowledgeAssistantRequest(**values)
+
+    def _reasoning(self):
+        return {
+            "summary": "现有数据提示容量衰减，但不能单独确定界面阻抗增长。",
+            "recommended_search_terms": ["operando EIS", "stack pressure"],
+            "research_background": [
+                {
+                    "claim": "卤化物电解质正极界面可能持续演化。",
+                    "source_ids": ["10.1000/a"],
+                    "evidence_level": "abstract",
+                    "limitations": "需核对正文。",
+                }
+            ],
+            "key_figures_tables": [
+                {
+                    "source_id": "10.1000/a",
+                    "location": "Figure 2",
+                    "parameter": "ionic conductivity",
+                    "value": "2.1",
+                    "unit": "mS cm-1",
+                    "conditions": "25 C",
+                    "interpretation": "仅用于背景比较。",
+                }
+            ],
+            "data_value_assessment": [
+                {
+                    "finding": "容量随循环降低",
+                    "value": "可作为失效起点证据",
+                    "evidence": "用户数据摘要",
+                    "confidence": "medium",
+                    "limitations": "单电池且无EIS",
+                }
+            ],
+            "missing_experiments": [
+                {
+                    "question": "阻抗是否增长？",
+                    "experiment": "循环前后及分阶段EIS",
+                    "variables": "频率、扰动、温度、压力",
+                    "expected_evidence": "界面相关阻抗随循环变化",
+                    "priority": "high",
+                }
+            ],
+            "missing_characterization": [
+                {
+                    "question": "界面产物是什么？",
+                    "characterization": "循环后XPS与截面SEM/EDS",
+                    "sampling": "首圈、衰减中期、失效后",
+                    "expected_evidence": "化学态与接触形貌变化",
+                    "priority": "high",
+                }
+            ],
+            "cannot_determine": ["不能仅由充放电曲线得到电荷转移电阻。"],
+            "knowledge_candidates": [
+                {
+                    "claim": "需要用分阶段EIS区分界面阻抗贡献。",
+                    "source_ids": ["10.1000/a"],
+                    "conditions": "卤化物固态电池",
+                    "confidence": "medium",
+                    "verification_needed": "核对正文方法与等效电路。",
+                }
+            ],
+        }
+
+    def test_validator_requires_data_value_and_missing_research_work(self):
+        from electrochem_harness.knowledge_assistant import validate_reasoning_result
+
+        with self.assertRaises(ValueError):
+            validate_reasoning_result({"summary": "too little"})
+        validated = validate_reasoning_result(self._reasoning())
+        self.assertTrue(validated["data_value_assessment"])
+        self.assertTrue(validated["missing_experiments"])
+        self.assertTrue(validated["missing_characterization"])
+
+    def test_run_writes_auditable_files_and_candidate_markdown(self):
+        from electrochem_harness.fulltext import DocumentEvidence
+        from electrochem_harness.knowledge_assistant import run_knowledge_assistant
+        from electrochem_harness.llm_provider import LLMResult
+
+        class FakeProvider:
+            def generate_json(self, system_prompt, payload):
+                self.payload = payload
+                return LLMResult(
+                    payload=self_result,
+                    model="fake-model",
+                    prompt_tokens=100,
+                    completion_tokens=80,
+                    total_tokens=180,
+                )
+
+        self_result = self._reasoning()
+        provider = FakeProvider()
+        records = [
+            {
+                "id": "10.1000/a",
+                "doi": "10.1000/a",
+                "title": "Interface study",
+                "year": 2025,
+                "journal": "Journal",
+                "abstract": "Interface resistance increased during cycling.",
+                "evidence_level": "abstract",
+                "source": "crossref",
+            }
+        ]
+        documents = [
+            DocumentEvidence(
+                source_id="10.1000/a",
+                title="Interface study",
+                doi="10.1000/a",
+                source_uri="local.html",
+                evidence_level="fulltext_html",
+                background_excerpt="Background text",
+                methods_excerpt="Method text",
+                figure_table_evidence=("Figure 2: 2.1 mS cm-1 at 25 C",),
+                body_excerpt="Body text",
+                content_hash="a" * 64,
+                limitations=(),
+            )
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            knowledge_path = root / "research_knowledge.md"
+            result = run_knowledge_assistant(
+                self._request(),
+                provider,
+                run_root=root / "runs",
+                knowledge_path=knowledge_path,
+                metadata_searcher=lambda request: records,
+                document_collector=lambda request, metadata: documents,
+            )
+            for name in (
+                "plan.json",
+                "evidence_packet.json",
+                "reasoning_result.json",
+                "run_record.json",
+            ):
+                self.assertTrue((result.run_dir / name).is_file(), name)
+            text = knowledge_path.read_text(encoding="utf-8")
+        self.assertIn("状态：candidate", text)
+        self.assertIn("数据价值判断", text)
+        self.assertIn("需要补充的实验", text)
+        self.assertIn("需要补充的表征", text)
+        self.assertIn("Figure 2", text)
+        self.assertEqual(result.total_tokens, 180)
+        self.assertNotIn("raw_documents", provider.payload)
+        self.assertNotIn(str(root), json.dumps(provider.payload, ensure_ascii=False))
+
+
+class KnowledgeAssistantCacheTests(unittest.TestCase):
+    def test_identical_evidence_packet_calls_provider_only_once(self):
+        from electrochem_harness.academic_search import AcademicSearchRequest
+        from electrochem_harness.knowledge_assistant import KnowledgeAssistantRequest, run_knowledge_assistant
+        from electrochem_harness.llm_provider import LLMResult
+
+        reasoning = {
+            "summary": "薄数据仍可作为筛选起点。",
+            "recommended_search_terms": [],
+            "research_background": [],
+            "key_figures_tables": [],
+            "data_value_assessment": [{"finding": "数据较少", "value": "用于初筛", "evidence": "摘要", "confidence": "low", "limitations": "无重复样"}],
+            "missing_experiments": [{"question": "是否可重复", "experiment": "三个平行电池", "variables": "同批次同条件", "expected_evidence": "均值和标准差", "priority": "high"}],
+            "missing_characterization": [{"question": "结构是否稳定", "characterization": "循环前后XRD", "sampling": "初始与失效后", "expected_evidence": "相变化", "priority": "high"}],
+            "cannot_determine": ["机理不可判断"],
+            "knowledge_candidates": [],
+        }
+
+        class CountingProvider:
+            def __init__(self):
+                self.calls = 0
+
+            def generate_json(self, system_prompt, payload):
+                self.calls += 1
+                return LLMResult(reasoning, "fake", 10, 10, 20)
+
+        search = AcademicSearchRequest(
+            domain="solid electrolyte",
+            research_question="stability",
+            concept_groups=(("solid electrolyte",),),
+            databases=("crossref",),
+            max_results=1,
+        )
+        request = KnowledgeAssistantRequest(search=search, max_documents=1, max_evidence_chars=10000)
+        provider = CountingProvider()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = run_knowledge_assistant(
+                request,
+                provider,
+                run_root=root / "runs",
+                knowledge_path=root / "knowledge.md",
+                metadata_searcher=lambda _: [],
+                document_collector=lambda *_: [],
+            )
+            second = run_knowledge_assistant(
+                request,
+                provider,
+                run_root=root / "runs",
+                knowledge_path=root / "knowledge.md",
+                metadata_searcher=lambda _: [],
+                document_collector=lambda *_: [],
+            )
+        self.assertEqual(provider.calls, 1)
+        self.assertFalse(first.cache_hit)
+        self.assertTrue(second.cache_hit)
+
+
+class ReleaseIntegrationTests(unittest.TestCase):
+    def test_private_llm_knowledge_and_runs_are_git_ignored(self):
+        ignore = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("knowledge/research_knowledge.md", ignore)
+        self.assertIn("knowledge/runs/", ignore)
+
+    def test_release_uses_empty_research_knowledge_template(self):
+        script = (PROJECT_ROOT / "build_release.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn("research_knowledge_template.md", script)
+        self.assertIn("research_knowledge.md", script)
+        template = PROJECT_ROOT / "knowledge" / "research_knowledge_template.md"
+        self.assertTrue(template.is_file())
+        self.assertIn("candidate", template.read_text(encoding="utf-8"))
+
+    def test_readme_documents_llm_and_campus_search_boundaries(self):
+        readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("文献知识助手", readme)
+        self.assertIn("Web of Science", readme)
+        self.assertIn("ELECTROCHEM_LLM_API_KEY", readme)
+        self.assertIn("不会读取账号、密码或Cookie", readme)
+
+
+if __name__ == "__main__":
+    unittest.main()

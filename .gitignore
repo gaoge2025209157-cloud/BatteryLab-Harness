@@ -21,6 +21,8 @@ origin_status.json
 knowledge/experiences.jsonl
 knowledge/literature_knowledge.jsonl
 knowledge/literature_knowledge.md
+knowledge/research_knowledge.md
+knowledge/runs/
 
 # Release artifacts are attached to GitHub Releases, not committed
 
@@ -49,3 +51,8 @@ desktop.ini
 *.log
 *.tmp
 *.bak
+
+# Machine-specific local launchers and private project notes
+start_gui_local_qwen.cmd
+项目上下文.md
+项目进度汇报_*.html

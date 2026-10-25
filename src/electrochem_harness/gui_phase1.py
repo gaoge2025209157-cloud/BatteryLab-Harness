@@ -81,6 +81,12 @@ class Phase1GuiController:
 
         metadata = _metadata(values)
         metadata["output_dir"] = str(output)
+        metadata["normalization_basis"] = (
+            "仪器文件导出的比容量口径（质量分母需由设备方法记录核验）"
+            if summary.get("mode") == "specific_capacity_curve"
+            else "未归一化容量（mAh）"
+        )
+        metadata["origin_plot_mode"] = str(values.get("origin_plot_mode", "both") or "both").strip().casefold()
         network = bool(values.get("search_literature"))
         origin = bool(values.get("use_origin"))
         plan = build_analysis_plan(
@@ -98,7 +104,8 @@ class Phase1GuiController:
                 else None
             ),
             origin_enabled=origin,
-            limitations=("Phase 1 GUI演示版仅用于验证受控执行与审计链。",),
+            origin_plot_mode=metadata["origin_plot_mode"],
+            limitations=("受控流程用于验证计划、批准、执行与审计链。",),
         )
         run_id = "run-{}".format(uuid.uuid4().hex)
         registry = _production_demo_registry(
@@ -199,7 +206,16 @@ def format_plan(prepared: Phase1Preparation) -> str:
     lines.append("\n联网：{}".format("是" if plan.network_enabled else "否"))
     if plan.network_enabled:
         lines.append("联网字段：{}".format(", ".join(plan.network_fields)))
-    lines.append("Origin：{}".format("是（本演示版将显式降级）" if plan.origin_enabled else "否"))
+    if plan.origin_enabled:
+        labels = {
+            "curve": "只画充放电曲线图",
+            "cycling": "只画循环容量/库仑效率图",
+            "both": "两张都画",
+        }
+        mode = str(plan.experiment_metadata.get("origin_plot_mode", "both"))
+        lines.append("Origin：是（{}）".format(labels.get(mode, mode)))
+    else:
+        lines.append("Origin：否")
     lines.append("\n预期产物：")
     lines.extend("- {}".format(name) for name in plan.expected_artifacts)
     if plan.limitations:
@@ -283,7 +299,22 @@ def _translate_raw_failure(raw_error: Exception, curve_error: Exception):
 
 
 def _metadata(values: Mapping[str, Any]):
-    return {key: str(values.get(key, "")).strip() for key in _RESEARCH_FIELDS}
+    metadata = {
+        key: str(values.get(key, "")).strip()
+        for key in _RESEARCH_FIELDS
+        if key not in {"test_current", "temperature", "normalization_basis"}
+    }
+    current = str(values.get("test_current", "")).strip()
+    temperature = str(values.get("temperature", "")).strip()
+    try:
+        metadata["test_current"] = "{:g} mA".format(float(current))
+    except (TypeError, ValueError):
+        metadata["test_current"] = current
+    try:
+        metadata["temperature"] = "{:g} °C".format(float(temperature))
+    except (TypeError, ValueError):
+        metadata["temperature"] = temperature
+    return metadata
 
 
 def _form_fingerprint(values: Mapping[str, Any], source: Path) -> str:
@@ -294,6 +325,7 @@ def _form_fingerprint(values: Mapping[str, Any], source: Path) -> str:
         "metadata": _metadata(values),
         "search_literature": bool(values.get("search_literature")),
         "use_origin": bool(values.get("use_origin")),
+        "origin_plot_mode": str(values.get("origin_plot_mode", "both") or "both").strip().casefold(),
         "max_literature": int(values.get("max_literature", 50)),
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")

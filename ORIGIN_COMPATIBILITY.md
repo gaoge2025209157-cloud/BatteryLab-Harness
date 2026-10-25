@@ -40,7 +40,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\run_sci_origin.ps1' `
    - `电化学分析.opju`；
    - `充放电曲线.png`；
    - `循环性能.png`。
-6. 人工检查字体、4 pt坐标轴、主次刻度方向、双纵轴和图例。
+6. 人工检查Nature统一主题：Arial英文/数字、中文宋体回退、约1.0 pt轴线、约1.5 pt数据线、向内刻度、NPG配色、双纵轴和图例。
 7. 在Pull Request中附上版本、Origin补丁号、Windows版本、状态JSON和截图，不上传真实实验数据。
 
 ## 验收标准
@@ -48,8 +48,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\run_sci_origin.ps1' `
 - 合成数据关键参数与Python报告一致；
 - 工程保存成功且重新打开无修复提示；
 - 两张图片均非空、坐标轴和曲线完整；
-- 中文使用宋体，英文/数字/图例使用Times New Roman；
-- 坐标轴4 pt，主刻度与次刻度向内；
+- 中文标签回退宋体，英文/数字/图例使用Arial；
+- 轴线约1.0 pt、数据线约1.5 pt，主刻度与次刻度向内；
+- 使用统一NPG配色并保持白色背景；
 - 如果触发兼容降级，输出仍正确且警告已记录；
 - 测试不改动用户已有Origin工程。
 

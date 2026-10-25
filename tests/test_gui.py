@@ -17,8 +17,8 @@ class GuiValidationTests(unittest.TestCase):
             "active_material": "S/C",
             "cell_type": "半电池",
             "counter_electrode": "Li",
-            "test_current": "0.1 C",
-            "temperature": "25 C",
+            "test_current": "0.1",
+            "temperature": "25",
             "normalization_basis": "硫质量",
             "search_literature": True,
             "use_origin": True,
@@ -35,7 +35,7 @@ class GuiValidationTests(unittest.TestCase):
         self.assertTrue(any("输入文件" in error for error in errors))
         self.assertTrue(any("输出目录" in error for error in errors))
 
-    def test_literature_search_requires_all_comparison_metadata(self):
+    def test_literature_search_requires_required_metadata_but_not_normalization_choice(self):
         from electrochem_harness.gui import validate_form
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -43,12 +43,26 @@ class GuiValidationTests(unittest.TestCase):
             source.write_text("placeholder", encoding="utf-8")
             values = self._values(source, Path(tmp) / "result")
             values["temperature"] = ""
-            values["normalization_basis"] = "待填"
+            values.pop("normalization_basis", None)
 
             errors = validate_form(values)
 
         self.assertTrue(any("测试温度" in error for error in errors))
-        self.assertTrue(any("质量归一化口径" in error for error in errors))
+        self.assertFalse(any("归一化" in error for error in errors))
+
+    def test_current_and_temperature_fields_reject_embedded_units(self):
+        from electrochem_harness.gui import validate_form
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "curve.csv"
+            source.write_text("placeholder", encoding="utf-8")
+            values = self._values(source, Path(tmp) / "result")
+            values["test_current"] = "0.1 C"
+            values["temperature"] = "25 C"
+            errors = validate_form(values)
+
+        self.assertTrue(any("mA" in error for error in errors))
+        self.assertTrue(any("°C" in error for error in errors))
 
     def test_report_only_command_is_argument_list_and_skips_origin(self):
         from electrochem_harness.gui import build_workflow_command
@@ -127,9 +141,8 @@ class GuiInteractionTests(unittest.TestCase):
                     "active_material": "S/C",
                     "cell_type": "半电池",
                     "counter_electrode": "Li",
-                    "test_current": "0.1 C",
-                    "temperature": "25 C",
-                    "normalization_basis": "硫质量",
+                    "test_current": "0.1",
+                    "temperature": "25",
                 }
                 for name, value in values.items():
                     app.variables[name].set(value)

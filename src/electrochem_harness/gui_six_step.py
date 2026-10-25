@@ -58,9 +58,10 @@ _SCOPE_HINTS = {
 class SixStepDialog(tk.Toplevel):
     """One window, six steps, no hidden work."""
 
-    def __init__(self, parent, project_root, values=None, *, origin_launcher=None):
+    def __init__(self, parent, project_root, values=None, *, origin_launcher=None, on_complete=None):
         super().__init__(parent)
         self.project_root = Path(project_root).resolve()
+        self.on_complete = on_complete
         self.events = queue.Queue()
         self.busy = False
         self.wizard = SixStepWizard(self.project_root, origin_launcher=origin_launcher)
@@ -124,6 +125,7 @@ class SixStepDialog(tk.Toplevel):
             "origin_exe": tk.StringVar(value=str(values.get("origin_exe", ""))),
             "search_literature": tk.BooleanVar(value=bool(values.get("search_literature", True))),
             "use_origin": tk.BooleanVar(value=bool(values.get("use_origin", True))),
+            "origin_plot_mode": tk.StringVar(value=str(values.get("origin_plot_mode", "both") or "both")),
             "max_literature": tk.IntVar(value=int(values.get("max_literature", 50) or 50)),
         }
         for name, _, _ in METADATA_FIELDS:
@@ -251,12 +253,15 @@ class SixStepDialog(tk.Toplevel):
             column = ttk.Frame(metadata)
             column.grid(row=0, column=block, sticky="nsew", padx=(0, 18) if block == 0 else 0)
             column.columnconfigure(1, weight=1)
-            for row, (name, label, _hint) in enumerate(chunk):
+            for row, (name, label, hint) in enumerate(chunk):
                 ttk.Label(column, text=label).grid(
                     row=row, column=0, sticky="w", padx=(0, 8), pady=3
                 )
                 ttk.Entry(column, textvariable=self.variables[name]).grid(
                     row=row, column=1, sticky="ew", pady=3
+                )
+                ttk.Label(column, text=hint, style="Hint.TLabel").grid(
+                    row=row, column=2, sticky="w", padx=(6, 0), pady=3
                 )
         ttk.Label(
             metadata,
@@ -284,12 +289,25 @@ class SixStepDialog(tk.Toplevel):
         ttk.Button(options, text="浏览…", command=self._choose_origin).grid(
             row=1, column=3, sticky="w", pady=(8, 0)
         )
+        self.origin_plot_choice = ttk.LabelFrame(options, text="Origin绘图内容（请人工确认）", padding=6)
+        self.origin_plot_choice.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        for column, (value, label) in enumerate((
+            ("curve", "只画充放电曲线图"),
+            ("cycling", "只画循环容量/库仑效率图"),
+            ("both", "两张都画"),
+        )):
+            ttk.Radiobutton(
+                self.origin_plot_choice,
+                text=label,
+                value=value,
+                variable=self.variables["origin_plot_mode"],
+            ).grid(row=0, column=column, sticky="w", padx=(0, 18))
         ttk.Label(
             options,
             text="Origin64.exe 留空则自动查找 2021–2026b；缺失或失败时只降级绘图，报告与绘图 CSV 保留。",
             style="Hint.TLabel",
             wraplength=880,
-        ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(6, 0))
+        ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(6, 0))
         return page
 
     def _path_row(self, parent, row, label, name, callback):
@@ -403,7 +421,7 @@ class SixStepDialog(tk.Toplevel):
         required = set(approval["required"])
         for row, item in enumerate(approval["available"]):
             scope = item["scope"]
-            variable = tk.BooleanVar(value=scope in required)
+            variable = tk.BooleanVar(value=False)
             self.scope_vars[scope] = variable
             label = item["label"]
             ttk.Checkbutton(
@@ -479,6 +497,22 @@ class SixStepDialog(tk.Toplevel):
         # 表格固定行数、不参与纵向拉伸：否则它会把下面的降级提示和操作按钮挤出视野。
         self.results_headline = ttk.Label(page, text="", style="Title.TLabel", wraplength=940)
         self.results_headline.grid(row=0, column=0, sticky="w", pady=(0, 8))
+        summary_box = ttk.LabelFrame(page, text="关键结论", padding=6)
+        summary_box.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        summary_box.columnconfigure(0, weight=1)
+        self.result_summary = tk.Text(
+            summary_box,
+            wrap="word",
+            state="disabled",
+            font=("Microsoft YaHei UI", 10),
+            height=11,
+            padx=8,
+            pady=6,
+        )
+        summary_scroll = ttk.Scrollbar(summary_box, orient="vertical", command=self.result_summary.yview)
+        self.result_summary.configure(yscrollcommand=summary_scroll.set)
+        self.result_summary.grid(row=0, column=0, sticky="ew")
+        summary_scroll.grid(row=0, column=1, sticky="ns")
 
         self.results_tree = ttk.Treeview(
             page, columns=("state", "sha256", "path"), show="tree headings", height=12
@@ -496,15 +530,15 @@ class SixStepDialog(tk.Toplevel):
         self.results_tree.bind("<<TreeviewSelect>>", self._show_selected_hash)
         scroll = ttk.Scrollbar(page, orient="vertical", command=self.results_tree.yview)
         self.results_tree.configure(yscrollcommand=scroll.set)
-        self.results_tree.grid(row=1, column=0, sticky="nsew")
-        scroll.grid(row=1, column=1, sticky="ns")
+        self.results_tree.grid(row=2, column=0, sticky="nsew")
+        scroll.grid(row=2, column=1, sticky="ns")
 
         self.degradation_label = ttk.Label(page, text="", style="Hint.TLabel", wraplength=940)
-        self.degradation_label.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        self.degradation_label.grid(row=3, column=0, sticky="w", pady=(8, 0))
 
         # 表格里只放前 16 位；完整值在这里给出，可选中复制，用于对外核对。
         hash_row = ttk.Frame(page)
-        hash_row.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        hash_row.grid(row=4, column=0, sticky="ew", pady=(6, 0))
         hash_row.columnconfigure(1, weight=1)
         ttk.Label(hash_row, text="选中项完整哈希", style="Hint.TLabel").grid(
             row=0, column=0, sticky="w", padx=(0, 8)
@@ -516,7 +550,7 @@ class SixStepDialog(tk.Toplevel):
         self.full_hash_entry.grid(row=0, column=1, sticky="ew")
 
         actions = ttk.Frame(page)
-        actions.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        actions.grid(row=5, column=0, sticky="ew", pady=(10, 0))
         ttk.Button(actions, text="打开输出目录", command=self.open_run_artifacts).grid(row=0, column=0)
         ttk.Button(actions, text="打开审计目录", command=self.open_run_directory).grid(
             row=0, column=1, padx=6
@@ -594,6 +628,22 @@ class SixStepDialog(tk.Toplevel):
         results = self.wizard.results
         if results is None:
             return
+        summary_path = None
+        for entry in results.report:
+            if entry.name == "关键结论.txt" and entry.available:
+                summary_path = Path(entry.path)
+                break
+        if summary_path is None:
+            summary_text = "本次运行没有生成关键结论，请查看失败或降级记录。"
+        else:
+            try:
+                summary_text = summary_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as error:
+                summary_text = "关键结论读取失败：{}".format(error)
+        self.result_summary.configure(state="normal")
+        self.result_summary.delete("1.0", "end")
+        self.result_summary.insert("1.0", summary_text)
+        self.result_summary.configure(state="disabled")
         for item in self.results_tree.get_children():
             self.results_tree.delete(item)
         self._hashes = self._recorded_hashes()
@@ -805,7 +855,16 @@ class SixStepDialog(tk.Toplevel):
         lines.append("联网：{}".format("是" if plan["network_enabled"] else "否"))
         if plan["network_enabled"]:
             lines.append("  发送字段：{}".format("、".join(plan["network_fields"]) or "（未填写）"))
-        lines.append("Origin：{}".format("是" if plan["origin_enabled"] else "否"))
+        if plan["origin_enabled"]:
+            mode = str(self.variables["origin_plot_mode"].get())
+            labels = {
+                "curve": "只画充放电曲线图",
+                "cycling": "只画循环容量/库仑效率图",
+                "both": "两张都画",
+            }
+            lines.append("Origin：是（{}）".format(labels.get(mode, mode)))
+        else:
+            lines.append("Origin：否")
         if plan["limitations"]:
             lines.append("")
             lines.append("限制：")
@@ -913,7 +972,12 @@ class SixStepDialog(tk.Toplevel):
                 self._append_execute("  • {}\n".format(item))
         self._render_results()
         self._show_step(WizardStep.RESULTS)
-        self.status.set("完成，请查看产物与审计记录")
+        self.status.set("完成，请查看关键结论、产物与审计记录")
+        if self.on_complete is not None:
+            try:
+                self.on_complete(self._run_dir())
+            except Exception:
+                pass
 
     def _on_execution_failed(self, message):
         self.busy = False

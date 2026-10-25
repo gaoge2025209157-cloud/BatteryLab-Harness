@@ -30,8 +30,8 @@ def values(source, output, *, network=False, origin=False):
         "active_material": "S/C",
         "cell_type": "半电池",
         "counter_electrode": "Li",
-        "test_current": "0.1 C",
-        "temperature": "25 C",
+        "test_current": "0.1",
+        "temperature": "25",
         "normalization_basis": "硫质量",
         "search_literature": network,
         "use_origin": origin,
@@ -93,7 +93,7 @@ class Phase1GuiControllerTests(unittest.TestCase):
             controller.prepare(original)
             controller.approve()
             changed = dict(original)
-            changed["temperature"] = "60 C"
+            changed["temperature"] = "60"
 
             self.assertTrue(controller.invalidate_if_changed(changed))
             self.assertTrue(controller.approval_invalidated)
@@ -290,22 +290,18 @@ class Phase1GuiControllerTests(unittest.TestCase):
 
 
 class Phase1GuiIntegrationTests(unittest.TestCase):
-    def test_main_window_exposes_phase1_controlled_demo(self):
+    def test_main_window_removes_the_legacy_phase1_entry(self):
         import tkinter as tk
-        from unittest.mock import patch
         from electrochem_harness.gui import ElectrochemApp
 
         root = tk.Tk()
         root.withdraw()
         app = ElectrochemApp(root, PROJECT_ROOT)
         try:
-            app.variables["battery_system"].set("锂硫电池")
-            with patch("electrochem_harness.gui.Phase1Dialog") as dialog:
-                app.open_phase1_demo()
-            self.assertEqual(app.phase1_button.cget("text"), "Phase 1受控演示")
-            passed_values = dialog.call_args.args[2]
-            self.assertEqual(passed_values["battery_system"], "锂硫电池")
+            self.assertFalse(hasattr(app, "phase1_button"))
+            self.assertTrue(callable(app.open_six_step))
         finally:
+            app._cancel_polling()
             root.destroy()
 
 

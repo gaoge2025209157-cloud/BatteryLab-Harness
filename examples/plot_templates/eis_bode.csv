@@ -1,0 +1,4 @@
+frequency_Hz,z_magnitude_ohm,phase_degree
+10,100,-70
+1000,20,-30
+100000,5,-5
