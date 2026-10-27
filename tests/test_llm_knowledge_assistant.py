@@ -334,10 +334,16 @@ class KnowledgeAssistantTests(unittest.TestCase):
             for name in (
                 "plan.json",
                 "evidence_packet.json",
+                "context_bundle.json",
+                "context_manifest.json",
                 "reasoning_result.json",
                 "run_record.json",
             ):
                 self.assertTrue((result.run_dir / name).is_file(), name)
+            record = json.loads((result.run_dir / "run_record.json").read_text(encoding="utf-8"))
+            manifest = json.loads((result.run_dir / "context_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(result.context_hash, record["context_hash"])
+            self.assertEqual(result.context_hash, manifest["context_hash"])
             text = knowledge_path.read_text(encoding="utf-8")
         self.assertIn("状态：candidate", text)
         self.assertIn("数据价值判断", text)
@@ -345,6 +351,10 @@ class KnowledgeAssistantTests(unittest.TestCase):
         self.assertIn("需要补充的表征", text)
         self.assertIn("Figure 2", text)
         self.assertEqual(result.total_tokens, 180)
+        self.assertIn("candidate_evidence_packet", provider.payload)
+        self.assertIn("task", provider.payload)
+        self.assertIn("permissions", provider.payload)
+        self.assertIn("data_observations", provider.payload)
         self.assertNotIn("raw_documents", provider.payload)
         self.assertNotIn(str(root), json.dumps(provider.payload, ensure_ascii=False))
 

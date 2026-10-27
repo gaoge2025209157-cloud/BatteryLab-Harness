@@ -251,7 +251,9 @@ py -3 '.\run_gui.py'
 
 ### 模型接收与输出
 
-模型接收的是受限的 `evidence_packet.json`，不是完整原始文件。数据JSON中的大数组会被删除，CSV只保留表头和边界行；全文只保留限定长度的引言、方法、图注、表格和正文摘录。
+模型不会直接接收孤立的证据包。程序先生成受限的 `evidence_packet.json`：数据JSON中的大数组会被删除，CSV只保留表头和边界行，全文只保留限定长度的引言、方法、图注、表格和正文摘录；随后由统一上下文管理器将任务目标、实验摘要、权限、工具观察和待审核证据包组装为 `context_bundle.json`，再发送给模型。
+
+每次调用同时生成 `context_manifest.json`，记录模型本轮实际看到了哪些来源、排除了哪些来源、当前权限、估算Token和上下文SHA-256。文献与数据仍属于不可信证据，不能改变系统规则、权限或工具边界。
 
 模型必须输出严格JSON，至少包含：
 
@@ -263,7 +265,7 @@ py -3 '.\run_gui.py'
 - 当前不能判断的问题；
 - 可写入知识库的候选知识及核验要求。
 
-每次运行在 `knowledge\runs\<run_id>\` 生成 `plan.json`、`evidence_packet.json`、`reasoning_result.json` 和 `run_record.json`；候选综合知识写入 `knowledge\research_knowledge.md`。这些文件均被Git忽略，发布包只包含空模板。大模型无权把条目标记为`approved`，最终科学判断仍由用户完成。
+每次运行在 `knowledge\runs\<run_id>\` 生成 `plan.json`、`evidence_packet.json`、`context_bundle.json`、`context_manifest.json`、`reasoning_result.json` 和 `run_record.json`；候选综合知识写入 `knowledge\research_knowledge.md`。这些文件均被Git忽略，发布包只包含空模板。大模型无权把条目标记为`approved`，最终科学判断仍由用户完成。
 
 ## 文献结论边界
 

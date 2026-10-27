@@ -170,7 +170,7 @@ knowledge/literature_knowledge.md
 
 主界面点击“文献知识助手”，填写知识领域、科学问题、AND/OR关键词组、精确短语、排除词和年份。程序可生成Web of Science、Scopus、中国知网等高级检索式，并在用户自己的浏览器中打开授权数据库，复用校园IP或已有登录；程序不会读取账号、密码或Cookie。
 
-自动检索使用Crossref/OpenAlex公开接口。校园网下载的HTML、TXT、Markdown全文可放入一个目录供程序读取；PDF需要可选`pypdf`，程序不会自动安装。模型优先接收研究背景、图注、表格、带单位参数和压缩后的数据摘要，并必须输出数据价值、缺失实验、缺失表征和不可判断项。
+自动检索使用Crossref/OpenAlex公开接口。校园网下载的HTML、TXT、Markdown全文可放入一个目录供程序读取；PDF需要可选`pypdf`，程序不会自动安装。程序先压缩研究背景、图注、表格、带单位参数和数据摘要，再由统一上下文管理器加入任务目标、当前权限与工具观察，生成 `context_bundle.json` 和 `context_manifest.json` 后发送给模型。模型必须输出数据价值、缺失实验、缺失表征和不可判断项。
 
 启动GUI前在PowerShell设置OpenAI兼容模型：
 

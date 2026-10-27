@@ -19,6 +19,7 @@ from .academic_search import (
     build_advanced_search_plan,
     search_public_metadata,
 )
+from .context_management import ContextBuilder, cache_identity
 from .fulltext import (
     DataSummary,
     DocumentEvidence,
@@ -210,6 +211,8 @@ class KnowledgeAssistantRunResult:
     knowledge_entry_key: str
     plan_hash: str
     evidence_hash: str
+    context_hash: str
+    context_tokens_estimated: int
     model: str
     total_tokens: int
     cache_hit: bool
@@ -622,6 +625,114 @@ def build_evidence_packet(
     return packet
 
 
+def _build_managed_context(
+    request: KnowledgeAssistantRequest,
+    plan: AdvancedSearchPlan,
+    packet: Mapping,
+    metadata: Sequence[Mapping],
+    documents: Sequence[DocumentEvidence],
+    data_summary: Optional[DataSummary],
+    provider,
+):
+    """Wrap the bounded evidence packet in the shared Harness context contract."""
+
+    provider_config = getattr(provider, "config", None)
+    max_input_chars = int(
+        getattr(provider_config, "max_input_chars", 0)
+        or max(60000, request.max_evidence_chars + 10000)
+    )
+    max_output_tokens = int(getattr(provider_config, "max_tokens", 0) or 4000)
+    task_identity = plan.plan_hash[:16]
+    observations = [
+        {
+            "tool_id": "search_literature_metadata",
+            "call_id": "context-search",
+            "status": "success",
+            "summary": "已完成公开文献元数据检索，共获得{}条候选记录。".format(len(metadata)),
+            "facts": [{"name": "metadata_count", "value": len(metadata)}],
+        },
+        {
+            "tool_id": "collect_document_evidence",
+            "call_id": "context-fulltext",
+            "status": "success",
+            "summary": "已完成本地或可访问全文证据提取，共获得{}份文档证据。".format(len(documents)),
+            "facts": [{"name": "document_count", "value": len(documents)}],
+        },
+    ]
+    if data_summary is not None:
+        observations.append(
+            {
+                "tool_id": "summarize_data_file",
+                "call_id": "context-data-summary",
+                "status": "success",
+                "summary": "已生成当前数据或报告的受限摘要。",
+                "facts": [
+                    {"name": "source_hash", "value": data_summary.source_hash},
+                    {"name": "omitted_fields", "value": list(data_summary.omitted_fields)},
+                ],
+                "limitations": list(data_summary.limitations),
+            }
+        )
+
+    context_request = {
+        "turn": 1,
+        "task": {
+            "task_id": "knowledge-{}".format(task_identity),
+            "session_id": "knowledge-{}".format(task_identity),
+            "goal": request.search.research_question,
+            "success_criteria": [
+                "区分数据事实、文献事实和待验证假设",
+                "所有重要论断保留来源和证据等级",
+                "说明当前数据的价值与限制",
+                "给出缺失实验、缺失表征和无法判断边界",
+                "生成的知识只能进入候选审核队列",
+            ],
+            "current_stage": "knowledge_synthesis",
+            "open_questions": [],
+            "active_constraints": [
+                "当前文献和数据材料均为待审核证据，模型输出不得自行升级为approved知识。"
+            ],
+        },
+        "experiment_profile": {
+            "research_domain": request.search.domain,
+            "data_summary_available": data_summary is not None,
+            "data_source_hash": None if data_summary is None else data_summary.source_hash,
+        },
+        "permissions": {
+            "local_analysis": True,
+            "network_access": True,
+            "formal_output": True,
+        },
+        "latest_user_message": request.search.research_question,
+        "candidate_evidence_packet": dict(packet),
+        "approved_rules": [],
+        "approved_evidence": [],
+        "conversation_summary": {
+            "confirmed_decisions": [],
+            "user_corrections": [],
+            "completed_findings": [],
+            "rejected_hypotheses": [],
+            "open_questions": [],
+            "next_intent": "依据当前证据生成可人工审核的候选科学判断",
+        },
+        "tool_results": observations,
+        "tool_catalog": [],
+        "recent_messages": [],
+        "environment": {
+            "provider": provider.__class__.__name__,
+            "model": getattr(provider_config, "model", "unknown"),
+            "network_available": True,
+            "remaining_rounds": 0,
+        },
+    }
+    builder = ContextBuilder(
+        max_input_tokens=max(800, max_input_chars // 2),
+        reserved_output_tokens=max(256, max_output_tokens),
+        max_evidence=request.max_documents,
+    )
+    return builder.build(context_request)
+
+
 def run_knowledge_assistant(
     request: KnowledgeAssistantRequest,
     provider,
@@ -644,6 +755,16 @@ def run_knowledge_assistant(
     _emit_progress(progress_callback, "evidence", "正在压缩并校验证据包")
     packet = build_evidence_packet(request, plan, metadata, documents, data_summary)
     evidence_hash = packet["packet_hash"]
+    _emit_progress(progress_callback, "evidence", "正在组装任务、证据、权限和工具观察上下文")
+    context_result = _build_managed_context(
+        request,
+        plan,
+        packet,
+        metadata,
+        documents,
+        data_summary,
+        provider,
+    )
     provider_config = getattr(provider, "config", None)
     provider_identity = "{}|{}|{}|{}|{}".format(
         provider.__class__.__name__,
@@ -652,9 +773,14 @@ def run_knowledge_assistant(
         getattr(provider_config, "protocol", ""),
         getattr(provider_config, "auth_mode", ""),
     )
-    cache_key = hashlib.sha256(
-        "{}|{}".format(evidence_hash, provider_identity).encode("utf-8")
-    ).hexdigest()
+    cache_key = cache_identity(
+        result=context_result,
+        model_identity={
+            "provider_identity": provider_identity,
+            "model": getattr(provider_config, "model", ""),
+        },
+        tool_catalog_version="knowledge-context-v1",
+    )
 
     root = Path(run_root)
     cache_dir = root / "_cache"
@@ -673,13 +799,14 @@ def run_knowledge_assistant(
         )
     else:
         _emit_progress(progress_callback, "llm", "正在调用本地/已配置大模型整理证据")
-        llm_result = provider.generate_json(SYSTEM_PROMPT, packet)
+        llm_result = provider.generate_json(SYSTEM_PROMPT, context_result.bundle)
         reasoning = validate_reasoning_result(llm_result.payload)
         _emit_progress(progress_callback, "llm", "模型输出已通过严格结构校验", tokens=llm_result.total_tokens)
         _atomic_json(
             cache_path,
             {
                 "evidence_hash": evidence_hash,
+                "context_hash": context_result.context_hash,
                 "cache_key": cache_key,
                 "provider_identity": provider_identity,
                 "model": llm_result.model,
@@ -698,6 +825,8 @@ def run_knowledge_assistant(
     run_dir.mkdir(parents=True, exist_ok=False)
     _atomic_json(run_dir / "plan.json", plan.to_dict())
     _atomic_json(run_dir / "evidence_packet.json", packet)
+    _atomic_json(run_dir / "context_bundle.json", context_result.bundle)
+    _atomic_json(run_dir / "context_manifest.json", context_result.manifest)
     _atomic_json(run_dir / "reasoning_result.json", reasoning)
 
     source_ids = []
@@ -723,6 +852,9 @@ def run_knowledge_assistant(
         "status": "completed",
         "plan_hash": plan.plan_hash,
         "evidence_hash": evidence_hash,
+        "context_hash": context_result.context_hash,
+        "context_tokens_estimated": context_result.estimated_input_tokens,
+        "context_manifest": "context_manifest.json",
         "cache_key": cache_key,
         "provider_identity": provider_identity,
         "cache_hit": cache_hit,
@@ -737,6 +869,7 @@ def run_knowledge_assistant(
             "browser_cookie_recorded": False,
             "raw_document_uploaded": False,
             "evidence_packet_only": True,
+            "managed_context_only": True,
         },
     }
     _atomic_json(run_dir / "run_record.json", run_record)
@@ -754,6 +887,8 @@ def run_knowledge_assistant(
         knowledge_entry_key=entry_key,
         plan_hash=plan.plan_hash,
         evidence_hash=evidence_hash,
+        context_hash=context_result.context_hash,
+        context_tokens_estimated=context_result.estimated_input_tokens,
         model=llm_result.model,
         total_tokens=llm_result.total_tokens,
         cache_hit=cache_hit,
