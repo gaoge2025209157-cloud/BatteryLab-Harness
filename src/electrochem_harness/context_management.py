@@ -661,4 +661,4 @@ def cache_identity(
             "model_identity": _model_safe(dict(model_identity)),
             "tool_catalog_version": str(tool_catalog_version),
         }
-          )
+    )
