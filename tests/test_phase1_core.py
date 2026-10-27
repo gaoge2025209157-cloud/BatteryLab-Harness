@@ -363,6 +363,7 @@ class ControlledRunIntegrationTests(unittest.TestCase):
         def report(context, metrics=None):
             artifacts = []
             for name, content in (
+                ("关键结论.txt", "关键指标\n循环：1\n"),
                 ("关键参数报告.md", "# report\n"),
                 ("关键参数.csv", "cycle,capacity\n1,100\n"),
                 ("完整分析.json", '{"status":"ok"}'),

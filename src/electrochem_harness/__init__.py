@@ -79,6 +79,63 @@ from .workflow import (
     WorkflowStateMachine,
 )
 
+# --- Phase 5: production GUI and Origin tooling -----------------------------
+from .gui_controller import (
+    STEP_TITLES,
+    PreflightView,
+    ResultEntry,
+    ResultView,
+    SixStepWizard,
+    WizardError,
+    WizardStep,
+)
+from .origin_adapter import (
+    OriginError,
+    OriginInstallation,
+    OriginJob,
+    OriginJobError,
+    OriginNotFound,
+    OriginPlotFailed,
+    OriginStatus,
+    find_origin,
+    launch_origin,
+)
+from .production_registry import (
+    NETWORK_ARTIFACTS,
+    ORIGIN_ARTIFACTS,
+    TOOL_ORDER,
+    ToolchainInputs,
+    build_production_registry,
+    tool_declarations,
+)
+from .academic_search import (
+    AcademicSearchRequest,
+    AdvancedSearchPlan,
+    build_advanced_search_plan,
+    open_guided_search_pages,
+    parse_concept_groups,
+    search_public_metadata,
+)
+from .fulltext import DataSummary, DocumentEvidence, extract_html_evidence, summarize_data_file
+from .knowledge_assistant import (
+    KnowledgeAssistantRequest,
+    KnowledgeAssistantRunResult,
+    ResearchKnowledgeStore,
+    build_evidence_packet,
+    run_knowledge_assistant,
+    validate_reasoning_result,
+)
+from .llm_provider import LLMConfig, LLMResult, OpenAICompatibleProvider
+from .electrochemical_plots import (
+    PLOT_SPECS,
+    PlotDataError,
+    PlotResult,
+    PlotSpec,
+    PlotTable,
+    create_electrochemical_plot,
+    load_plot_table,
+)
+
 __all__ = [
     "AnalysisPlan",
     "ApprovalExpired",
@@ -148,4 +205,55 @@ __all__ = [
     "scientific_standard_identity",
     "scientific_standard_manifest",
     "write_replicate_outputs",
+    # Phase 5 additions (append-only block to keep rebases trivial).
+    "NETWORK_ARTIFACTS",
+    "ORIGIN_ARTIFACTS",
+    "OriginError",
+    "OriginInstallation",
+    "OriginJob",
+    "OriginJobError",
+    "OriginNotFound",
+    "OriginPlotFailed",
+    "OriginStatus",
+    "PreflightView",
+    "ResultEntry",
+    "ResultView",
+    "STEP_TITLES",
+    "SixStepWizard",
+    "TOOL_ORDER",
+    "ToolchainInputs",
+    "WizardError",
+    "WizardStep",
+    "build_production_registry",
+    "find_origin",
+    "launch_origin",
+    "tool_declarations",
+    # LLM-assisted academic knowledge workflow.
+    "AcademicSearchRequest",
+    "AdvancedSearchPlan",
+    "DataSummary",
+    "DocumentEvidence",
+    "KnowledgeAssistantRequest",
+    "KnowledgeAssistantRunResult",
+    "LLMConfig",
+    "LLMResult",
+    "OpenAICompatibleProvider",
+    "ResearchKnowledgeStore",
+    "build_advanced_search_plan",
+    "build_evidence_packet",
+    "extract_html_evidence",
+    "open_guided_search_pages",
+    "parse_concept_groups",
+    "run_knowledge_assistant",
+    "search_public_metadata",
+    "summarize_data_file",
+    "validate_reasoning_result",
+    # Literature-aligned electrochemical plot catalog.
+    "PLOT_SPECS",
+    "PlotDataError",
+    "PlotResult",
+    "PlotSpec",
+    "PlotTable",
+    "create_electrochemical_plot",
+    "load_plot_table",
 ]

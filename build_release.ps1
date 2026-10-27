@@ -15,10 +15,15 @@ $AllowedFiles = @(
     'run_sci.py',
     'run_gui.py',
     'start_gui.cmd',
+    'start_gui_local_qwen_portable.cmd',
+    'START_HERE_WINDOWS.md',
     'run_land.py',
     'run_demo.py',
     'run_phase2_validation.py',
     'run_replicates.py',
+    'run_evaluation.py',
+    'verify_origin.py',
+    'verify_origin.cmd',
     'origin_plot.py',
     'origin_compat.json',
     'ORIGIN_COMPATIBILITY.md',
@@ -29,11 +34,11 @@ $AllowedFiles = @(
     'SECURITY.md',
     'VERSION',
     'CHANGELOG.md',
-    'RELEASE_NOTES_v0.6.0-rc1.md',
+    'RELEASE_NOTES_v0.7.0-rc1.md',
     'TEAM_WORK_PACKAGES.md',
     'LICENSE.txt'
 )
-$AllowedDirectories = @('src', 'examples', 'standards', 'tests', '.github')
+$AllowedDirectories = @('src', 'examples', 'standards', 'tests', 'docs', '.github')
 
 New-Item -ItemType Directory -Force $ReleaseRoot | Out-Null
 if (Test-Path $Stage) { Remove-Item -LiteralPath $Stage -Recurse -Force }
@@ -78,6 +83,9 @@ Copy-Item -LiteralPath (Join-Path $Root 'knowledge\base_rules.json') -Destinatio
 Copy-Item -LiteralPath (
     Join-Path $Root 'knowledge\literature_knowledge_template.md'
 ) -Destination (Join-Path $knowledge 'literature_knowledge.md')
+Copy-Item -LiteralPath (
+    Join-Path $Root 'knowledge\research_knowledge_template.md'
+) -Destination (Join-Path $knowledge 'research_knowledge.md')
 New-Item -ItemType Directory -Force (Join-Path $Stage 'outputs') | Out-Null
 
 Get-ChildItem -Path $Stage -Directory -Recurse -Filter '__pycache__' -ErrorAction SilentlyContinue |

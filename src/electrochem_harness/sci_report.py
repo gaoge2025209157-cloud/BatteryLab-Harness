@@ -153,6 +153,109 @@ def _render_literature_and_value(payload, research_profile, literature_result):
     return lines
 
 
+def render_readable_summary(payload, research_profile=None, literature_result=None) -> str:
+    """Render the decision-facing result in plain text.
+
+    The detailed Markdown remains an auditable attachment.  This view is kept
+    deliberately short so the GUI answers only four questions: what are the
+    numbers, what do they mean, what can the data support, and what should be
+    done next.  Every interpretation carries its basis and any usable DOI in
+    the same paragraph instead of sending the reader to a separate appendix.
+    """
+
+    report = payload.get("report", {})
+    cycles = list(report.get("cycles", ()))
+    completed = [item for item in cycles if item.get("complete")]
+    issues = list(report.get("quality_issues", ()))
+    verified = [
+        record
+        for record in (literature_result or {}).get("records", ())
+        if record.get("doi_verified") and record.get("doi")
+    ]
+    direct = [record for record in verified if record.get("match_level") == "direct"]
+    references = direct or verified
+
+    lines = ["关键指标"]
+    lines.append("完整循环：{} 圈；未完成循环：{} 圈".format(len(completed), len(cycles) - len(completed)))
+    if completed:
+        first, last = completed[0], completed[-1]
+        first_capacity = first.get("discharge_specific_capacity_mAh_g")
+        last_capacity = last.get("discharge_specific_capacity_mAh_g")
+        retention = last.get("capacity_retention")
+        efficiencies = [
+            item.get("coulombic_efficiency")
+            for item in completed
+            if item.get("coulombic_efficiency") is not None
+        ]
+        lines.append(
+            "放电比容量：{} → {} mAh/g；容量保持率：{}".format(
+                _number(first_capacity), _number(last_capacity), _percent(retention)
+            )
+        )
+        if efficiencies:
+            lines.append("库仑效率范围：{:.2%}–{:.2%}".format(min(efficiencies), max(efficiencies)))
+        voltage_gaps = [
+            item.get("average_charge_voltage_V") - item.get("average_discharge_voltage_V")
+            for item in completed
+            if item.get("average_charge_voltage_V") is not None
+            and item.get("average_discharge_voltage_V") is not None
+        ]
+        if voltage_gaps:
+            lines.append("末个完整循环平均充放电电压差：{:.3f} V".format(voltage_gaps[-1]))
+
+        lines.extend(["", "简要结论与科学依据"])
+        if first_capacity is not None and last_capacity is not None:
+            direction = "下降" if last_capacity < first_capacity else "未下降"
+            lines.append(
+                "在当前测试区间内，放电比容量{}。依据：首末完整循环由 {:.1f} 变为 {:.1f} mAh/g，保持率为 {}。".format(
+                    direction, first_capacity, last_capacity, _percent(retention)
+                )
+            )
+        if efficiencies:
+            lines.append(
+                "充放电可逆性以库仑效率范围描述。依据：CE = 放电容量/充电容量，本次为 {:.2%}–{:.2%}；该指标不能单独确定副反应机理。".format(
+                    min(efficiencies), max(efficiencies)
+                )
+            )
+    else:
+        lines.extend(["", "简要结论与科学依据", "当前不能评价循环趋势。依据：没有识别到完整充放电循环。"])
+
+    if references:
+        rendered = []
+        for record in references[:3]:
+            title = str(record.get("title") or "已核验文献").strip()
+            rendered.append("{}（DOI: {}）".format(title, record["doi"]))
+        comparison = "直接可比" if direct else "仅背景相关"
+        lines.append("参考文献：{}；当前属于{}证据，比较时仍需对齐倍率、温度、载量和质量口径。".format("；".join(rendered), comparison))
+    else:
+        lines.append("参考文献：本次没有获得DOI已核验且条件匹配的文献，因此不作领先、落后或机理定级。")
+
+    lines.extend(["", "实验数据能说明什么"])
+    if completed:
+        lines.append("可以说明：当前文件中的容量、效率、保持率、平均电压及其随循环的变化。")
+        lines.append("不能说明：仅凭充放电曲线不能确定界面成分、电荷转移阻抗、扩散系数或具体衰减机理。")
+    else:
+        lines.append("可以说明：数据格式或循环完整性存在需要先处理的问题。")
+        lines.append("不能说明：没有完整循环时不能评价容量保持和可逆性。")
+    if issues:
+        lines.append("质量提醒：{}".format("；".join(str(item.get("message", "")) for item in issues[:2])))
+
+    profile_text = "" if research_profile is None else " ".join(
+        str(value) for value in research_profile.to_dict().values()
+    ).casefold()
+    solid_state = any(key in profile_text for key in ("solid", "固态", "halide", "卤化物"))
+    lines.extend(["", "下一步怎么做"])
+    lines.append("1. 对照设备软件抽查一个完整循环，并补足至少3个同条件平行电池。")
+    if solid_state:
+        lines.append("2. 在首圈、稳定期和衰减后测试EIS，同时记录温度、压力、载量和面容量。")
+        lines.append("3. 用循环前后XRD、Raman、XPS及截面SEM区分主体结构、界面化学和接触退化。")
+    else:
+        lines.append("2. 在首圈、稳定期和衰减后测试EIS，判断阻抗变化是否与容量衰减同步。")
+        lines.append("3. 根据体系补充循环前后结构、成分和界面表征，并设置单变量对照组。")
+    lines.append("4. 文献比较前统一倍率、温度、载量、循环圈数和质量归一化口径。")
+    return "\n".join(lines) + "\n"
+
+
 def render_concise_markdown(
     payload: dict,
     material: Optional[str],
@@ -288,6 +391,7 @@ def create_scientific_bundle(
     max_literature=50,
     literature_knowledge_path=None,
     literature_markdown_path=None,
+    origin_plot_mode="both",
 ):
     from .land_curve import (
         _decode,
@@ -366,6 +470,11 @@ def create_scientific_bundle(
             research_profile=research_profile,
             literature_result=literature_result,
         ),
+        encoding="utf-8",
+    )
+    conclusion_path = target / "关键结论.txt"
+    conclusion_path.write_text(
+        render_readable_summary(payload, research_profile, literature_result),
         encoding="utf-8",
     )
 
@@ -450,12 +559,14 @@ def create_scientific_bundle(
         "curve_png": str(target / "充放电曲线.png"),
         "cycling_png": str(target / "循环性能.png"),
         "status_path": str(status_path),
+        "plot_mode": origin_plot_mode,
         "selected_cycles": [item["cycle"] for item in selected],
         "representative_cycle_limit": 8,
     }
     job_path.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
     result_paths = {
         "report": report_path,
+        "conclusion": conclusion_path,
         "summary": summary_path,
         "curves": curves_path,
         "json": json_path,

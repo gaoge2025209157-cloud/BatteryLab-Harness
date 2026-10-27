@@ -52,6 +52,7 @@ _BASE_TOOLS = (
     "calculate_cycle_metrics",
 )
 _BASE_ARTIFACTS = (
+    "关键结论.txt",
     "关键参数报告.md",
     "关键参数.csv",
     "完整分析.json",
@@ -77,6 +78,7 @@ def build_analysis_plan(
     network_enabled: bool = False,
     network_fields: Optional[Mapping[str, Any]] = None,
     origin_enabled: bool = False,
+    origin_plot_mode: str = "both",
     limitations: Iterable[str] = (),
     risks: Iterable[str] = (),
 ) -> AnalysisPlan:
@@ -118,7 +120,15 @@ def build_analysis_plan(
     if network_enabled:
         artifacts.extend(_LITERATURE_ARTIFACTS)
     if origin_enabled:
-        artifacts.extend(_ORIGIN_ARTIFACTS)
+        mode = str(origin_plot_mode or "both").strip().casefold()
+        if mode not in {"curve", "cycling", "both"}:
+            raise PlanningError("origin_plot_mode must be curve, cycling, or both")
+        artifacts.append("电化学分析.opju")
+        if mode in {"curve", "both"}:
+            artifacts.append("充放电曲线.png")
+        if mode in {"cycling", "both"}:
+            artifacts.append("循环性能.png")
+        artifacts.append("origin_status.json")
 
     normalized_limitations = list(_text_tuple(limitations, "limitations"))
     if normalized_issues:

@@ -10,20 +10,16 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from .approval import ApprovalError
+from .gui_controller import (
+    METADATA_FIELDS,
+    SUPPORTED_EXTENSIONS,
+    UNKNOWN_VALUES,
+    validate_form,
+)
 from .gui_phase1 import Phase1GuiController, format_plan
 from .workflow import ApprovalRequired
 
 
-UNKNOWN_VALUES = {"", "待填", "未知", "unknown", "n/a", "na", "???"}
-METADATA_FIELDS = (
-    ("battery_system", "电池体系", "例如：锂硫电池 / lithium-sulfur battery"),
-    ("active_material", "活性物质", "例如：S/C复合正极、LiFePO4"),
-    ("cell_type", "电池类型", "例如：半电池、全电池、对称电池"),
-    ("counter_electrode", "对电极/另一电极", "例如：Li、Na、NMC811"),
-    ("test_current", "测试电流/倍率", "例如：100 mA g-1、0.1 C"),
-    ("temperature", "测试温度", "例如：25 C、60 C"),
-    ("normalization_basis", "质量归一化口径", "例如：硫质量、正极活性物质质量"),
-)
 CLI_FIELD_FLAGS = {
     "battery_system": "-BatterySystem",
     "active_material": "-ActiveMaterial",
@@ -33,37 +29,12 @@ CLI_FIELD_FLAGS = {
     "temperature": "-Temperature",
     "normalization_basis": "-NormalizationBasis",
 }
-SUPPORTED_EXTENSIONS = {".csv", ".txt", ".tsv", ".dat"}
 
 
 def _missing(value):
+    """True when a metadata field counts as unanswered (shares the wizard's set)."""
+
     return str(value or "").strip().casefold() in UNKNOWN_VALUES
-
-
-def validate_form(values):
-    """Return user-facing validation errors without touching the filesystem."""
-    errors = []
-    source_text = str(values.get("input_file", "")).strip()
-    if not source_text or not Path(source_text).is_file():
-        errors.append("请选择存在的蓝电输入文件。")
-    elif Path(source_text).suffix.lower() not in SUPPORTED_EXTENSIONS:
-        errors.append("输入文件必须是 CSV、TXT、TSV 或 DAT 文本导出。")
-    if not str(values.get("output_dir", "")).strip():
-        errors.append("请选择输出目录。")
-    if values.get("search_literature"):
-        for name, label, _ in METADATA_FIELDS:
-            if _missing(values.get(name)):
-                errors.append("启用文献检索时必须填写：{}。".format(label))
-    try:
-        maximum = int(values.get("max_literature", 50))
-        if maximum < 1 or maximum > 200:
-            raise ValueError
-    except (TypeError, ValueError):
-        errors.append("候选 DOI 数量必须是 1–200 的整数。")
-    origin_exe = str(values.get("origin_exe", "")).strip()
-    if values.get("use_origin") and origin_exe and not Path(origin_exe).is_file():
-        errors.append("指定的 Origin64.exe 不存在；可清空该项让程序自动查找。")
-    return errors
 
 
 def build_workflow_command(project_root, values):
@@ -306,12 +277,15 @@ class ElectrochemApp:
         self.busy = False
         self.task_kind = None
         self.phase1_dialog = None
+        self.knowledge_assistant_dialog = None
+        self.plot_dialog = None
         self.variables = {
             "input_file": tk.StringVar(),
             "output_dir": tk.StringVar(),
             "origin_exe": tk.StringVar(),
             "search_literature": tk.BooleanVar(value=True),
             "use_origin": tk.BooleanVar(value=True),
+            "origin_plot_mode": tk.StringVar(value="both"),
             "max_literature": tk.IntVar(value=50),
         }
         for name, _, _ in METADATA_FIELDS:
@@ -322,17 +296,22 @@ class ElectrochemApp:
         for variable in self.variables.values():
             variable.trace_add("write", self._notify_phase1_form_changed)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.root.after(100, self._poll_events)
+        self.root.bind("<Destroy>", self._on_root_destroy, add="+")
+        self.poll_id = self.root.after(100, self._poll_events)
 
     def _configure_window(self):
-        self.root.title("ElectrochemHarness v0.6.0-rc1 — 电化学数据分析")
-        self.root.geometry("980x820")
-        self.root.minsize(820, 680)
+        self.root.title("ElectrochemHarness — 电化学研究工作台")
+        self.root.geometry("1280x860")
+        self.root.minsize(980, 700)
         style = ttk.Style(self.root)
         if "vista" in style.theme_names():
             style.theme_use("vista")
-        style.configure("Title.TLabel", font=("Microsoft YaHei UI", 16, "bold"))
-        style.configure("Hint.TLabel", foreground="#555555")
+        style.configure("Title.TLabel", font=("Microsoft YaHei UI", 17, "bold"))
+        style.configure("Section.TLabel", font=("Microsoft YaHei UI", 10, "bold"))
+        style.configure("Hint.TLabel", foreground="#556273")
+        style.configure("Accent.TButton", font=("Microsoft YaHei UI", 10, "bold"), padding=(12, 7))
+        style.configure("Nav.TButton", anchor="w", padding=(10, 7))
+        style.configure("Muted.TButton", anchor="w", padding=(10, 7))
 
     def _build_widgets(self):
         outer = ttk.Frame(self.root, padding=14)
@@ -343,12 +322,15 @@ class ElectrochemApp:
         ttk.Label(outer, text="电化学智能实验 Harness", style="Title.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(
             outer,
-            text="本地读取蓝电文本数据；原始文件不会上传。只有实验检索条件会发送到 Crossref。",
+            text="本地读取蓝电文本数据；原始文件不会上传。推荐使用「六步受控分析」：先看计划、再批准、失败可重跑。",
             style="Hint.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(2, 10))
 
         form = ttk.Frame(outer)
+        # 数据、实验条件、联网与Origin确认统一放在受控分析窗口中，
+        # 主工作台只保留测试类型、知识助手和关键结论，避免两套表单。
         form.grid(row=2, column=0, sticky="nsew")
+        form.grid_remove()
         form.columnconfigure(0, weight=1)
         form.columnconfigure(1, weight=1)
 
@@ -402,36 +384,104 @@ class ElectrochemApp:
             wraplength=330,
         ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
-        log_box = ttk.LabelFrame(outer, text="运行日志", padding=8)
-        log_box.grid(row=3, column=0, sticky="nsew")
-        log_box.columnconfigure(0, weight=1)
-        log_box.rowconfigure(0, weight=1)
-        self.log = tk.Text(log_box, height=12, wrap="word", state="disabled", font=("Consolas", 9))
-        scroll = ttk.Scrollbar(log_box, orient="vertical", command=self.log.yview)
+        workspace = ttk.PanedWindow(outer, orient="horizontal")
+        workspace.grid(row=3, column=0, sticky="nsew")
+
+        test_nav = ttk.LabelFrame(workspace, text="研究测试", padding=8)
+        workspace.add(test_nav, weight=0)
+        ttk.Label(
+            test_nav,
+            text="当前可用",
+            style="Section.TLabel",
+        ).pack(anchor="w", pady=(0, 4))
+        self.test_entry_buttons = {}
+        entries = (
+            ("charge_discharge", "充放电 / 循环", self.open_six_step, True),
+            ("performance_plots", "倍率 / dQdV / Arrhenius", lambda: self.open_plot_workspace("rate_capability"), True),
+            ("eis", "EIS / 电导率", lambda: self.open_plot_workspace("eis_nyquist"), True),
+            ("cv_lsv", "CV / LSV", lambda: self.open_plot_workspace("cv_lsv"), True),
+            ("gitt_pitt", "GITT / PITT", lambda: self.open_plot_workspace("gitt_pitt"), True),
+            ("ccd", "对称电池 / CCD", lambda: self.open_plot_workspace("ccd"), True),
+            ("characterization", "表征关联", lambda: self.open_test_placeholder("表征关联"), False),
+        )
+        for key, label, command, available in entries:
+            button = ttk.Button(
+                test_nav,
+                text=label if available else label + "  · 待开发",
+                style="Nav.TButton" if available else "Muted.TButton",
+                command=command,
+                width=23,
+            )
+            button.pack(fill="x", pady=2)
+            self.test_entry_buttons[key] = button
+            if key == "charge_discharge":
+                self.six_step_button = button
+        ttk.Separator(test_nav, orient="horizontal").pack(fill="x", pady=10)
+        self.knowledge_assistant_button = ttk.Button(
+            test_nav,
+            text="文献知识助手",
+            style="Accent.TButton",
+            command=self.open_knowledge_assistant,
+        )
+        self.knowledge_assistant_button.pack(fill="x", pady=2)
+        ttk.Label(
+            test_nav,
+            text="充放电进入完整受控分析；其他已开放入口使用通用数据契约生成Nature风格图和审计记录。",
+            style="Hint.TLabel",
+            wraplength=185,
+        ).pack(anchor="w", pady=(10, 0))
+
+        insight_box = ttk.LabelFrame(workspace, text="工作台", padding=8)
+        workspace.add(insight_box, weight=1)
+        insight_box.columnconfigure(0, weight=1)
+        insight_box.rowconfigure(0, weight=1)
+        self.workspace_tabs = ttk.Notebook(insight_box)
+        self.workspace_tabs.grid(row=0, column=0, sticky="nsew")
+
+        conclusion_page = ttk.Frame(self.workspace_tabs, padding=6)
+        conclusion_page.columnconfigure(0, weight=1)
+        conclusion_page.rowconfigure(0, weight=1)
+        self.conclusion_preview = tk.Text(
+            conclusion_page,
+            wrap="word",
+            state="disabled",
+            font=("Microsoft YaHei UI", 10),
+            padx=12,
+            pady=10,
+            spacing1=2,
+            spacing3=4,
+        )
+        conclusion_scroll = ttk.Scrollbar(conclusion_page, orient="vertical", command=self.conclusion_preview.yview)
+        self.conclusion_preview.configure(yscrollcommand=conclusion_scroll.set)
+        self.conclusion_preview.grid(row=0, column=0, sticky="nsew")
+        conclusion_scroll.grid(row=0, column=1, sticky="ns")
+        self.workspace_tabs.add(conclusion_page, text="分析结论")
+        self._replace_conclusion(
+            "请选择左侧测试类型开始。\n\n"
+            "充放电分析完成后，这里只显示关键指标、简要结论、科学依据与参考文献，以及下一步建议。\n"
+            "详细表格、计算口径和审计记录仍保存在运行目录中。"
+        )
+
+        log_page = ttk.Frame(self.workspace_tabs, padding=6)
+        log_page.columnconfigure(0, weight=1)
+        log_page.rowconfigure(0, weight=1)
+        self.log = tk.Text(log_page, height=12, wrap="word", state="disabled", font=("Consolas", 9))
+        scroll = ttk.Scrollbar(log_page, orient="vertical", command=self.log.yview)
         self.log.configure(yscrollcommand=scroll.set)
         self.log.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
+        self.workspace_tabs.add(log_page, text="运行日志")
 
         controls = ttk.Frame(outer)
         controls.grid(row=4, column=0, sticky="ew", pady=(10, 0))
-        controls.columnconfigure(6, weight=1)
-        self.check_button = ttk.Button(controls, text="检查环境", command=self.check_environment)
-        self.check_button.grid(row=0, column=0, padx=(0, 6))
-        self.run_button = ttk.Button(controls, text="开始分析", command=self.run_analysis)
-        self.run_button.grid(row=0, column=1, padx=6)
-        self.phase1_button = ttk.Button(controls, text="Phase 1受控演示", command=self.open_phase1_demo)
-        self.phase1_button.grid(row=0, column=2, padx=6)
-        self.cancel_button = ttk.Button(controls, text="取消任务", command=self.cancel_task, state="disabled")
-        self.cancel_button.grid(row=0, column=3, padx=6)
-        self.open_button = ttk.Button(controls, text="打开结果目录", command=self.open_output)
-        self.open_button.grid(row=0, column=4, padx=6)
+        controls.columnconfigure(2, weight=1)
+        self.open_button = ttk.Button(controls, text="打开最近结果", command=self.open_output)
+        self.open_button.grid(row=0, column=0, padx=(0, 6))
         self.knowledge_button = ttk.Button(
-            controls, text="编辑文献知识库", command=self.open_knowledge
+            controls, text="打开本地知识库", command=self.open_knowledge
         )
-        self.knowledge_button.grid(row=0, column=5, padx=6)
-        self.progress = ttk.Progressbar(controls, mode="indeterminate", length=120)
-        self.progress.grid(row=0, column=6, sticky="e", padx=(12, 8))
-        ttk.Label(controls, textvariable=self.status).grid(row=0, column=7, sticky="e")
+        self.knowledge_button.grid(row=0, column=1, padx=6)
+        ttk.Label(controls, textvariable=self.status).grid(row=0, column=3, sticky="e")
 
     def _path_row(self, parent, row, label, variable, callback):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
@@ -476,16 +526,83 @@ class ElectrochemApp:
         self.log.see("end")
         self.log.configure(state="disabled")
 
+    def _replace_conclusion(self, text):
+        self.conclusion_preview.configure(state="normal")
+        self.conclusion_preview.delete("1.0", "end")
+        self.conclusion_preview.insert("1.0", str(text))
+        self.conclusion_preview.configure(state="disabled")
+
+    def _load_analysis_preview(self, output_dir=None):
+        output = str(output_dir or self.variables["output_dir"].get()).strip()
+        conclusion = Path(output) / "关键结论.txt" if output else None
+        if conclusion is None or not conclusion.is_file():
+            self._replace_conclusion("尚未找到关键结论。完成受控分析后，摘要会自动显示在此处。")
+            return False
+        try:
+            text = conclusion.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            self._replace_conclusion("关键结论读取失败：{}".format(error))
+            return False
+        self._replace_conclusion(text[:30000])
+        self.workspace_tabs.select(0)
+        return True
+
+    def open_plot_workspace(self, initial_plot_type="rate_capability"):
+        from .electrochemical_plots import PLOT_SPECS
+        from .gui_plots import ElectrochemicalPlotDialog
+
+        dialog = self.plot_dialog
+        if dialog is not None:
+            try:
+                if dialog.winfo_exists():
+                    dialog.plot_type.set(PLOT_SPECS[initial_plot_type].label)
+                    dialog._update_spec()
+                    dialog.lift()
+                    dialog.focus_force()
+                    return
+            except (KeyError, tk.TclError):
+                pass
+        self.plot_dialog = ElectrochemicalPlotDialog(
+            self.root, self.project_root, initial_plot_type=initial_plot_type
+        )
+
+    def open_test_placeholder(self, test_name):
+        window = tk.Toplevel(self.root)
+        window.title("{} — 入口预留".format(test_name))
+        window.geometry("520x300")
+        window.transient(self.root)
+        body = ttk.Frame(window, padding=20)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=test_name, style="Title.TLabel").pack(anchor="w")
+        ttk.Label(
+            body,
+            text=(
+                "该测试已进入完整电化学研究工具路线图，但计算、质量门和标准答案尚未实现。\n\n"
+                "预留流程：导入原始数据 → 填写测试条件 → 预检查 → 生成计划 → 人工批准 → 分析与验证 → 结论。\n\n"
+                "当前窗口不会读取数据或执行任何占位算法。"
+            ),
+            style="Hint.TLabel",
+            wraplength=470,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(14, 18))
+        ttk.Button(body, text="尚未开放", state="disabled").pack(anchor="w")
+
     def _set_busy(self, busy, label=""):
         self.busy = busy
-        self.run_button.configure(state="disabled" if busy else "normal")
-        self.check_button.configure(state="disabled" if busy else "normal")
-        self.cancel_button.configure(state="normal" if busy else "disabled")
+        for name in ("run_button", "check_button"):
+            button = getattr(self, name, None)
+            if button is not None:
+                button.configure(state="disabled" if busy else "normal")
+        cancel_button = getattr(self, "cancel_button", None)
+        if cancel_button is not None:
+            cancel_button.configure(state="normal" if busy else "disabled")
+        progress = getattr(self, "progress", None)
         if busy:
-            self.progress.start(12)
+            if progress is not None:
+                progress.start(12)
             self.status.set(label or "运行中")
-        else:
-            self.progress.stop()
+        elif progress is not None:
+            progress.stop()
 
     def _start_command(self, command, kind):
         if self.busy:
@@ -541,7 +658,8 @@ class ElectrochemApp:
             self.status.set("检查完成" if self.task_kind == "check" else "分析完成")
             self._append_log("任务完成。")
             if self.task_kind == "analysis":
-                messagebox.showinfo("分析完成", "报告和图形输出已生成。")
+                self._load_analysis_preview()
+                messagebox.showinfo("分析完成", "分析已完成，关键结论已显示在主界面。")
         else:
             self.status.set("任务失败")
             self._append_log("任务失败，退出码：{}".format(exit_code))
@@ -567,6 +685,31 @@ class ElectrochemApp:
             return
         command = build_workflow_command(self.project_root, values)
         self._start_command(command, "analysis")
+
+    def open_six_step(self):
+        """Open the production six-step flow with the current form values."""
+
+        from .gui_six_step import SixStepDialog
+
+        dialog = getattr(self, "six_step_dialog", None)
+        if dialog is not None and getattr(dialog, "winfo_exists", lambda: 0)():
+            dialog.lift()
+            dialog.focus_force()
+            return
+        self.six_step_dialog = SixStepDialog(
+            self.root,
+            self.project_root,
+            self._values(),
+            on_complete=self._on_controlled_analysis_complete,
+        )
+
+    def _on_controlled_analysis_complete(self, run_dir):
+        if run_dir is None:
+            return
+        artifacts = Path(run_dir) / "artifacts"
+        self.variables["output_dir"].set(str(artifacts))
+        if self._load_analysis_preview(artifacts):
+            self.status.set("分析完成：关键结论已更新")
 
     def open_phase1_demo(self):
         dialog = self.phase1_dialog
@@ -614,6 +757,30 @@ class ElectrochemApp:
             return
         self._terminate_process()
 
+    def open_knowledge_assistant(self):
+        from .gui_knowledge import KnowledgeAssistantDialog
+
+        dialog = self.knowledge_assistant_dialog
+        if dialog is not None:
+            try:
+                if dialog.winfo_exists():
+                    dialog.lift()
+                    dialog.focus_force()
+                    return
+            except tk.TclError:
+                pass
+        initial_data = self.variables["input_file"].get().strip()
+        output_dir = self.variables["output_dir"].get().strip()
+        if output_dir:
+            analysis_json = Path(output_dir) / "完整分析.json"
+            if analysis_json.is_file():
+                initial_data = str(analysis_json)
+        self.knowledge_assistant_dialog = KnowledgeAssistantDialog(
+            self.root,
+            self.project_root,
+            initial_data_file=initial_data,
+        )
+
     def open_knowledge(self):
         from .markdown_knowledge import MarkdownLiteratureKnowledgeStore
 
@@ -629,6 +796,19 @@ class ElectrochemApp:
             return
         os.startfile(str(Path(target).resolve()))
 
+    def _on_root_destroy(self, event=None):
+        if event is None or event.widget is self.root:
+            self._cancel_polling()
+
+    def _cancel_polling(self):
+        poll_id = getattr(self, "poll_id", None)
+        if poll_id is not None:
+            try:
+                self.root.after_cancel(poll_id)
+            except tk.TclError:
+                pass
+            self.poll_id = None
+
     def _on_close(self):
         if self.busy and not messagebox.askyesno("退出", "任务仍在运行。是否终止任务并退出？"):
             return
@@ -640,8 +820,9 @@ class ElectrochemApp:
 def smoke_test(project_root):
     root = tk.Tk()
     root.withdraw()
-    ElectrochemApp(root, project_root)
+    app = ElectrochemApp(root, project_root)
     root.update_idletasks()
+    app._cancel_polling()
     root.destroy()
 
 
