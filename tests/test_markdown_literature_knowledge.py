@@ -54,74 +54,48 @@ class MarkdownLiteratureKnowledgeTests(unittest.TestCase):
             ],
         }
 
-    def test_verified_literature_is_summarized_to_editable_markdown(self):
+    def test_discovery_metadata_is_not_written_to_markdown_knowledge(self):
+        from electrochem_harness.markdown_knowledge import MarkdownLiteratureKnowledgeStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "literature_knowledge.md"
+            result = MarkdownLiteratureKnowledgeStore(path).update_from_search(
+                self._profile(), self._search_result()
+            )
+
+        self.assertFalse(path.exists())
+        self.assertEqual(result["stored"], 0)
+        self.assertEqual(result["updated"], 0)
+        self.assertEqual(result["skipped_discovery_only"], 2)
+        self.assertEqual(result["write_policy"], "fulltext_llm_learning_only")
+
+    def test_repeat_discovery_updates_remain_no_op(self):
         from electrochem_harness.markdown_knowledge import MarkdownLiteratureKnowledgeStore
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "literature_knowledge.md"
             store = MarkdownLiteratureKnowledgeStore(path)
-            result = store.update_from_search(self._profile(), self._search_result())
-            text = path.read_text(encoding="utf-8")
+            first = store.update_from_search(self._profile(), self._search_result())
+            second = store.update_from_search(self._profile(), self._search_result())
 
-        self.assertEqual(result["stored"], 1)
-        self.assertIn("# 电化学文献知识库", text)
-        self.assertIn("10.1000/interface", text)
-        self.assertIn("Interfacial resistance controls polarization", text)
-        self.assertIn("150.0 mAh/g", text)
-        self.assertIn("状态：candidate", text)
-        self.assertIn("人工确认知识（可编辑）", text)
-        self.assertNotIn("10.1000/unverified", text)
+        self.assertFalse(path.exists())
+        self.assertEqual(first["stored"], 0)
+        self.assertEqual(second["updated"], 0)
 
-    def test_repeat_update_deduplicates_and_preserves_human_edits(self):
-        from electrochem_harness.markdown_knowledge import MarkdownLiteratureKnowledgeStore
-
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "literature_knowledge.md"
-            store = MarkdownLiteratureKnowledgeStore(path)
-            store.update_from_search(self._profile(), self._search_result())
-            text = path.read_text(encoding="utf-8")
-            text = text.replace("状态：candidate", "状态：approved")
-            text = text.replace(
-                "- （在此填写经你核对后确认的知识；每条一行）",
-                "- 界面阻抗增长会提高该体系的极化；应用前需核对阻抗测试条件。",
-            )
-            text = text.replace(
-                "- （可记录页码、图号、条件差异、反例或你的判断）",
-                "- 已人工核对论文正文第5页。",
-            )
-            path.write_text(text, encoding="utf-8")
-
-            result = store.update_from_search(self._profile(), self._search_result())
-            updated = path.read_text(encoding="utf-8")
-
-        self.assertEqual(result["updated"], 1)
-        self.assertEqual(updated.count("<!-- LITERATURE-ENTRY:START"), 1)
-        self.assertIn("状态：approved", updated)
-        self.assertIn("界面阻抗增长会提高该体系的极化", updated)
-        self.assertIn("已人工核对论文正文第5页", updated)
-
-    def test_only_approved_matching_entries_become_judgment_basis(self):
+    def test_discovery_results_never_become_judgment_basis(self):
         from electrochem_harness.markdown_knowledge import MarkdownLiteratureKnowledgeStore
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "literature_knowledge.md"
             store = MarkdownLiteratureKnowledgeStore(path)
             store.update_from_search(self._profile(), self._search_result())
-            text = path.read_text(encoding="utf-8").replace(
-                "状态：candidate", "状态：approved"
-            ).replace(
-                "- （在此填写经你核对后确认的知识；每条一行）",
-                "- 已确认：该体系需重点关注界面阻抗与堆叠压力。",
-            )
-            path.write_text(text, encoding="utf-8")
-
             matching = store.summary(self._profile())
             other = store.summary(self._profile(material="Li6PS5Cl"))
 
-        self.assertEqual(matching["approved_record_count"], 1)
-        self.assertIn("界面阻抗与堆叠压力", matching["approved_claims"][0]["text"])
+        self.assertEqual(matching["approved_record_count"], 0)
+        self.assertEqual(matching["candidate_record_count"], 0)
+        self.assertEqual(matching["approved_claims"], [])
         self.assertEqual(other["approved_record_count"], 0)
-        self.assertEqual(other["approved_claims"], [])
 
     def test_empty_store_can_be_created_for_manual_editing(self):
         from electrochem_harness.markdown_knowledge import MarkdownLiteratureKnowledgeStore
@@ -134,7 +108,7 @@ class MarkdownLiteratureKnowledgeTests(unittest.TestCase):
         self.assertEqual(created, path)
         self.assertIn("用户总则（可编辑）", text)
 
-    def test_bundle_updates_markdown_and_records_adopted_knowledge(self):
+    def test_bundle_does_not_persist_metadata_or_abstract_as_knowledge(self):
         from electrochem_harness.sci_report import create_scientific_bundle
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -151,35 +125,20 @@ class MarkdownLiteratureKnowledgeTests(unittest.TestCase):
                 "electrochem_harness.literature.search_crossref",
                 return_value=self._search_result(),
             ):
-                first = create_scientific_bundle(
+                bundle = create_scientific_bundle(
                     source,
-                    root / "output-1",
+                    root / "output",
                     research_profile=self._profile(),
                     search_literature=True,
                     max_literature=1,
                     literature_markdown_path=knowledge_path,
                 )
-            text = knowledge_path.read_text(encoding="utf-8").replace(
-                "状态：candidate", "状态：approved"
-            ).replace(
-                "- （在此填写经你核对后确认的知识；每条一行）",
-                "- 已确认：界面稳定性是该体系循环性能的重要约束。",
-            )
-            knowledge_path.write_text(text, encoding="utf-8")
+            payload = json.loads(bundle["json"].read_text(encoding="utf-8"))
 
-            second = create_scientific_bundle(
-                source,
-                root / "output-2",
-                research_profile=self._profile(),
-                search_literature=False,
-                literature_markdown_path=knowledge_path,
-            )
-            payload = json.loads(second["json"].read_text(encoding="utf-8"))
-            report = second["report"].read_text(encoding="utf-8")
-
-        self.assertEqual(payload["editable_literature_knowledge"]["approved_record_count"], 1)
-        self.assertIn("界面稳定性是该体系循环性能的重要约束", report)
-        self.assertEqual(first["knowledge_markdown"], knowledge_path)
+        knowledge = payload["editable_literature_knowledge"]
+        self.assertFalse(knowledge_path.exists())
+        self.assertEqual(knowledge["new_or_updated_record_count"], 0)
+        self.assertEqual(knowledge["write_policy"], "fulltext_llm_learning_only")
 
 
 if __name__ == "__main__":

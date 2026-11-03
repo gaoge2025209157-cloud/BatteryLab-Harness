@@ -205,40 +205,18 @@ class MarkdownLiteratureKnowledgeStore:
         return "\n".join(lines)
 
     def update_from_search(self, profile, search_result) -> dict:
-        text = self._read()
-        blocks = self._blocks(text)
-        stored = updated = rejected = 0
-        replacements = {}
-        for source in search_result.get("records", []):
-            doi = str(source.get("doi") or "").strip().casefold()
-            if not source.get("doi_verified") or not _DOI_PATTERN.match(doi):
-                rejected += 1
-                continue
-            key = _entry_key(profile, doi)
-            previous = blocks.get(key)
-            replacements[key] = self._render_entry(profile, source, previous)
-            if previous is None:
-                stored += 1
-            else:
-                updated += 1
+        """Do not persist metadata/abstract discovery results as knowledge."""
 
-        for key, replacement in replacements.items():
-            pattern = re.compile(
-                r"<!-- LITERATURE-ENTRY:START key={} -->\n.*?"
-                r"<!-- LITERATURE-ENTRY:END -->".format(re.escape(key)),
-                flags=re.DOTALL,
-            )
-            if pattern.search(text):
-                text = pattern.sub(lambda _: replacement, text, count=1)
-            else:
-                text = text.rstrip() + "\n\n" + replacement + "\n"
-        self._write(text)
         return {
-            "stored": stored,
-            "updated": updated,
-            "rejected_unverified": rejected,
+            "stored": 0,
+            "updated": 0,
+            "rejected_unverified": sum(
+                1 for source in search_result.get("records", []) if not source.get("doi_verified")
+            ),
+            "skipped_discovery_only": len(search_result.get("records", [])),
             "profile_fingerprint": _profile_fingerprint(profile),
             "path": str(self.path),
+            "write_policy": "fulltext_llm_learning_only",
         }
 
     def summary(self, profile, update_result=None) -> dict:

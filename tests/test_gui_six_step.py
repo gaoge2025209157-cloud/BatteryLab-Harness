@@ -111,7 +111,7 @@ class SixStepNavigationTests(DialogTestCase):
 
             self.assertEqual(dialog.wizard.step, WizardStep.DATA)
             self.assertEqual(dialog.step_label.cget("text"), "第 1 / 6 步")
-            self.assertEqual(dialog.next_button.cget("text"), "下一步：预检查")
+            self.assertEqual(dialog.next_button.cget("text"), "开始自动调研与分析")
             self.assertEqual(str(dialog.back_button.cget("state")), "disabled")
             self.assertFalse((Path(temp) / "out" / "runs").exists())
 
@@ -150,7 +150,7 @@ class SixStepNavigationTests(DialogTestCase):
             self.assertEqual(dialog.wizard.step, WizardStep.PLAN)
             body = dialog.plan_text.get("1.0", "end")
             self.assertIn("计划哈希", body)
-            self.assertIn("build_scientific_report", body)
+            self.assertIn("生成确定性报告并准备人工知识审核", body)
 
     def test_going_back_rebuilds_the_plan(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -416,19 +416,19 @@ class FooterWiringTests(DialogTestCase):
             root, dialog = self.make(values(SAMPLE, Path(temp) / "out"))
 
             self.assertEqual(str(dialog.next_button.cget("state")), "normal")
-            self.assertIn("预检查", dialog.next_button.cget("text"))
-            dialog.next_button.invoke()
+            self.assertIn("自动调研", dialog.next_button.cget("text"))
+            dialog.go_next()
             self.assertEqual(dialog.wizard.step, WizardStep.PREFLIGHT)
 
             self.assertEqual(str(dialog.next_button.cget("state")), "normal")
             self.assertIn("计划", dialog.next_button.cget("text"))
-            dialog.next_button.invoke()
+            dialog.go_next()
             self.assertEqual(dialog.wizard.step, WizardStep.PLAN)
 
             # 关键回归点：计划页必须能继续走到第 4 步
             self.assertEqual(str(dialog.next_button.cget("state")), "normal")
             self.assertIn("批准", dialog.next_button.cget("text"))
-            dialog.next_button.invoke()
+            dialog.go_next()
             self.assertEqual(dialog.wizard.step, WizardStep.APPROVAL)
 
             # 窗口在测试里是 withdraw 状态，ismapped 恒为假，改用布局管理器判断
@@ -451,7 +451,7 @@ class FooterWiringTests(DialogTestCase):
             source.write_text("不是蓝电数据\n", encoding="utf-8")
             root, dialog = self.make(values(source, root_dir / "out"))
 
-            dialog.next_button.invoke()
+            dialog.go_next()
 
             self.assertEqual(dialog.wizard.step, WizardStep.PREFLIGHT)
             self.assertEqual(str(dialog.next_button.cget("state")), "disabled")
@@ -461,10 +461,32 @@ class FooterWiringTests(DialogTestCase):
             root, dialog = self.make(values(SAMPLE, Path(temp) / "out"))
             self.assertEqual(str(dialog.back_button.cget("state")), "disabled")
 
-            dialog.next_button.invoke()
+            dialog.go_next()
             self.assertEqual(str(dialog.back_button.cget("state")), "normal")
             dialog.back_button.invoke()
             self.assertEqual(dialog.wizard.step, WizardStep.DATA)
+    def test_primary_button_runs_preflight_plan_and_approval_automatically(self):
+        from electrochem_harness.research_profiles import ResearchProfileStore
+
+        with tempfile.TemporaryDirectory() as temp:
+            root_dir = Path(temp)
+            form = values(SAMPLE, root_dir / "out", network=True)
+            form.update({
+                "unified_research": True,
+                "research_domain": "锂硫电池",
+                "research_background": "研究固态转化过程。",
+                "research_question": "哪些因素影响放电电压和比容量？",
+                "literature_year_from": 2020,
+            })
+            root, dialog = self.make(form)
+            dialog.profile_store = ResearchProfileStore(root_dir / "profiles.json")
+
+            with patch.object(dialog, "_start_execution") as start:
+                dialog.next_button.invoke()
+
+            self.assertTrue(start.called)
+            self.assertTrue(dialog.wizard.can_start)
+            self.assertTrue((root_dir / "profiles.json").is_file())
 
 
 class MainWindowEntryTests(unittest.TestCase):
@@ -475,7 +497,7 @@ class MainWindowEntryTests(unittest.TestCase):
         root.withdraw()
         try:
             app = ElectrochemApp(root, PROJECT_ROOT)
-            self.assertEqual(app.six_step_button.cget("text"), "充放电 / 循环")
+            self.assertEqual(app.six_step_button.cget("text"), "自动研究与分析（充放电）")
             self.assertTrue(callable(app.open_six_step))
         finally:
             app._cancel_polling()

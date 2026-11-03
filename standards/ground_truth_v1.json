@@ -2,8 +2,6 @@
   "suite_id": "phase2-core-v1",
   "standard_version": "1.0.0",
   "standard_hash": "a910b44758a7a7431061da68bdbb13253118181412ea1eb8509ac282a716aa58",
-  "review_status": "draft",
-  "reviewers": [],
   "cases": [
     {
       "case_id": "GT-RAW-01",

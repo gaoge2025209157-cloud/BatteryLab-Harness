@@ -32,7 +32,7 @@ class AcademicSearchPlanTests(unittest.TestCase):
                 "cnki",
                 "google_scholar",
             ),
-            max_results=20,
+            max_results=5,
         )
 
     def test_builds_stable_advanced_queries_for_major_databases(self):
@@ -207,12 +207,31 @@ class KnowledgeAssistantTests(unittest.TestCase):
         return {
             "summary": "现有数据提示容量衰减，但不能单独确定界面阻抗增长。",
             "recommended_search_terms": ["operando EIS", "stack pressure"],
+            "article_core_findings": [
+                {
+                    "source_id": "10.1000/a",
+                    "research_question": "卤化物正极界面如何演化？",
+                    "method": "循环测试与原位阻抗",
+                    "core_finding": "界面过程随循环发生变化。",
+                    "evidence_location": "Results, Figure 2",
+                    "limitations": "仅适用于文中电池构型。",
+                }
+            ],
             "research_background": [
                 {
                     "claim": "卤化物电解质正极界面可能持续演化。",
                     "source_ids": ["10.1000/a"],
-                    "evidence_level": "abstract",
-                    "limitations": "需核对正文。",
+                    "evidence_level": "fulltext_html",
+                    "limitations": "需保持文中测试边界。",
+                }
+            ],
+            "electrochemistry_foundations": [
+                {
+                    "concept": "界面阻抗",
+                    "explanation": "界面反应和接触变化会改变交流响应。",
+                    "source_ids": ["10.1000/a"],
+                    "evidence_level": "fulltext_html",
+                    "boundaries": "需要频率区间、温度和压力条件共同解释。",
                 }
             ],
             "key_figures_tables": [
@@ -223,7 +242,16 @@ class KnowledgeAssistantTests(unittest.TestCase):
                     "value": "2.1",
                     "unit": "mS cm-1",
                     "conditions": "25 C",
-                    "interpretation": "仅用于背景比较。",
+                    "scientific_logic": "电导率决定体相离子传输能力。",
+                    "relevance_to_experiment": "需在相同温度下比较。",
+                }
+            ],
+            "learning_delta": [
+                {
+                    "new_understanding": "需要把界面阻抗变化与压力条件联动解释。",
+                    "relationship_to_prior": "当前没有已批准知识，属于首轮认识。",
+                    "source_ids": ["10.1000/a"],
+                    "unresolved_question": "阻抗变化来自化学副反应还是接触损失？",
                 }
             ],
             "data_value_assessment": [
@@ -297,10 +325,10 @@ class KnowledgeAssistantTests(unittest.TestCase):
             {
                 "id": "10.1000/a",
                 "doi": "10.1000/a",
-                "title": "Interface study",
+                "title": "Halide electrolyte interface study",
                 "year": 2025,
-                "journal": "Journal",
-                "abstract": "Interface resistance increased during cycling.",
+                "journal": "Nature Communications",
+                "abstract": "Halide electrolyte interface resistance increased during cycling.",
                 "evidence_level": "abstract",
                 "source": "crossref",
             }
@@ -308,14 +336,14 @@ class KnowledgeAssistantTests(unittest.TestCase):
         documents = [
             DocumentEvidence(
                 source_id="10.1000/a",
-                title="Interface study",
+                title="Halide electrolyte interface study",
                 doi="10.1000/a",
                 source_uri="local.html",
                 evidence_level="fulltext_html",
-                background_excerpt="Background text",
-                methods_excerpt="Method text",
+                background_excerpt="Halide electrolyte interface background " * 20,
+                methods_excerpt="Electrochemical impedance method " * 20,
                 figure_table_evidence=("Figure 2: 2.1 mS cm-1 at 25 C",),
-                body_excerpt="Body text",
+                body_excerpt="Halide electrolyte interface full-text results and discussion. " * 40,
                 content_hash="a" * 64,
                 limitations=(),
             )
@@ -365,17 +393,7 @@ class KnowledgeAssistantCacheTests(unittest.TestCase):
         from electrochem_harness.knowledge_assistant import KnowledgeAssistantRequest, run_knowledge_assistant
         from electrochem_harness.llm_provider import LLMResult
 
-        reasoning = {
-            "summary": "薄数据仍可作为筛选起点。",
-            "recommended_search_terms": [],
-            "research_background": [],
-            "key_figures_tables": [],
-            "data_value_assessment": [{"finding": "数据较少", "value": "用于初筛", "evidence": "摘要", "confidence": "low", "limitations": "无重复样"}],
-            "missing_experiments": [{"question": "是否可重复", "experiment": "三个平行电池", "variables": "同批次同条件", "expected_evidence": "均值和标准差", "priority": "high"}],
-            "missing_characterization": [{"question": "结构是否稳定", "characterization": "循环前后XRD", "sampling": "初始与失效后", "expected_evidence": "相变化", "priority": "high"}],
-            "cannot_determine": ["机理不可判断"],
-            "knowledge_candidates": [],
-        }
+        reasoning = KnowledgeAssistantTests()._reasoning()
 
         class CountingProvider:
             def __init__(self):
@@ -394,6 +412,28 @@ class KnowledgeAssistantCacheTests(unittest.TestCase):
         )
         request = KnowledgeAssistantRequest(search=search, max_documents=1, max_evidence_chars=10000)
         provider = CountingProvider()
+        from electrochem_harness.fulltext import DocumentEvidence
+        records = [{
+            "id": "10.1000/a",
+            "doi": "10.1000/a",
+            "title": "Solid electrolyte stability",
+            "year": 2025,
+            "journal": "Nature Communications",
+            "abstract": "Solid electrolyte stability and interface behavior.",
+        }]
+        documents = [DocumentEvidence(
+            source_id="10.1000/a",
+            title="Solid electrolyte stability",
+            doi="10.1000/a",
+            source_uri="paper.html",
+            evidence_level="fulltext_html",
+            background_excerpt="Solid electrolyte stability background. " * 20,
+            methods_excerpt="Electrochemical method. " * 20,
+            figure_table_evidence=("Figure 2 full-text evidence",),
+            body_excerpt="Solid electrolyte stability full-text discussion. " * 40,
+            content_hash="b" * 64,
+            limitations=(),
+        )]
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             first = run_knowledge_assistant(
@@ -401,16 +441,16 @@ class KnowledgeAssistantCacheTests(unittest.TestCase):
                 provider,
                 run_root=root / "runs",
                 knowledge_path=root / "knowledge.md",
-                metadata_searcher=lambda _: [],
-                document_collector=lambda *_: [],
+                metadata_searcher=lambda _: records,
+                document_collector=lambda *_: documents,
             )
             second = run_knowledge_assistant(
                 request,
                 provider,
                 run_root=root / "runs",
                 knowledge_path=root / "knowledge.md",
-                metadata_searcher=lambda _: [],
-                document_collector=lambda *_: [],
+                metadata_searcher=lambda _: records,
+                document_collector=lambda *_: documents,
             )
         self.assertEqual(provider.calls, 1)
         self.assertFalse(first.cache_hit)
@@ -433,7 +473,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
 
     def test_readme_documents_llm_and_campus_search_boundaries(self):
         readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("文献知识助手", readme)
+        self.assertIn("自动调研与知识库", readme)
         self.assertIn("Web of Science", readme)
         self.assertIn("ELECTROCHEM_LLM_API_KEY", readme)
         self.assertIn("不会读取账号、密码或Cookie", readme)

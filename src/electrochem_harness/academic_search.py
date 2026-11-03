@@ -19,7 +19,9 @@ from urllib.request import Request, urlopen
 CROSSREF_WORKS = "https://api.crossref.org/works"
 OPENALEX_WORKS = "https://api.openalex.org/works"
 GUIDED_DATABASE_URLS = {
+    "tju_library": "https://home.lib.tju.edu.cn/",
     "web_of_science": "https://www.webofscience.com/wos/woscc/advanced-search",
+    "wiley": "https://onlinelibrary.wiley.com/action/doSearch",
     "scopus": "https://www.scopus.com/search/form.uri?display=advanced",
     "cnki": "https://kns.cnki.net/kns8s/AdvSearch",
     "google_scholar": "https://scholar.google.com/scholar",
@@ -56,7 +58,7 @@ class AcademicSearchRequest:
     year_from: Optional[int] = None
     year_to: Optional[int] = None
     databases: Tuple[str, ...] = AUTOMATIC_DATABASES
-    max_results: int = 20
+    max_results: int = 5
     language: str = "any"
 
     def __post_init__(self):
@@ -75,8 +77,8 @@ class AcademicSearchRequest:
             raise ValueError("Unsupported academic databases: {}".format(", ".join(unsupported)))
         if not databases:
             raise ValueError("At least one academic database must be selected.")
-        if not 1 <= int(self.max_results) <= 100:
-            raise ValueError("max_results must be between 1 and 100.")
+        if not 1 <= int(self.max_results) <= 5:
+            raise ValueError("max_results must be between 1 and 5 for one learning run.")
         if self.year_from is not None and int(self.year_from) < 1900:
             raise ValueError("year_from must be 1900 or later.")
         if self.year_to is not None and int(self.year_to) < 1900:
@@ -173,18 +175,23 @@ def build_advanced_search_plan(request: AcademicSearchRequest) -> AdvancedSearch
         if request.year_from or request.year_to:
             year_text = "；年份={}–{}".format(request.year_from or "不限", request.year_to or "不限")
         queries["cnki"] = "主题=({}){}".format(base, year_text)
+    if "wiley" in request.databases:
+        queries["wiley"] = base
+    if "tju_library" in request.databases:
+        queries["tju_library"] = "数据库导航：Web of Science、Wiley Online Library"
     if "google_scholar" in request.databases:
         queries["google_scholar"] = base
 
-    browser_urls = {
-        key: (
-            "{}?{}".format(url, urlencode({"q": base}))
-            if key == "google_scholar"
-            else url
-        )
-        for key, url in GUIDED_DATABASE_URLS.items()
-        if key in request.databases
-    }
+    browser_urls = {}
+    for key, url in GUIDED_DATABASE_URLS.items():
+        if key not in request.databases:
+            continue
+        if key == "google_scholar":
+            browser_urls[key] = "{}?{}".format(url, urlencode({"q": base}))
+        elif key == "wiley":
+            browser_urls[key] = "{}?{}".format(url, urlencode({"AllField": base}))
+        else:
+            browser_urls[key] = url
     automatic = tuple(item for item in AUTOMATIC_DATABASES if item in request.databases)
     canonical = json.dumps(
         {"request": request.to_dict(), "queries": queries},
@@ -260,6 +267,13 @@ def _crossref_records(payload: dict) -> List[dict]:
             continue
         title = item.get("title") or []
         journal = item.get("container-title") or []
+        pdf_urls = []
+        for link in item.get("link", []) or []:
+            url = _clean(link.get("URL") or "")
+            content_type = _clean(link.get("content-type") or "").casefold()
+            if url and ("pdf" in content_type or url.casefold().split("?", 1)[0].endswith(".pdf")):
+                if url not in pdf_urls:
+                    pdf_urls.append(url)
         records.append(
             {
                 "id": doi,
@@ -269,6 +283,8 @@ def _crossref_records(payload: dict) -> List[dict]:
                 "journal": _clean(journal[0] if journal else ""),
                 "abstract": _clean_markup(item.get("abstract", "")),
                 "landing_url": "https://doi.org/{}".format(doi),
+                "pdf_url": pdf_urls[0] if pdf_urls else "",
+                "pdf_urls": pdf_urls,
                 "citation_count": int(item.get("is-referenced-by-count", 0) or 0),
                 "source": "crossref",
                 "evidence_level": "abstract" if item.get("abstract") else "metadata",
@@ -287,6 +303,19 @@ def _openalex_records(payload: dict) -> List[dict]:
         if not identifier:
             continue
         abstract = _openalex_abstract(item.get("abstract_inverted_index"))
+        pdf_urls = []
+        fulltext_landing_urls = []
+        for candidate in [item.get("best_oa_location") or {}, location, *(item.get("locations") or [])]:
+            url = _clean(candidate.get("pdf_url") or "")
+            if url and url not in pdf_urls:
+                pdf_urls.append(url)
+            landing = _clean(candidate.get("landing_page_url") or "")
+            if landing and not landing.casefold().startswith("https://doi.org/") and landing not in fulltext_landing_urls:
+                fulltext_landing_urls.append(landing)
+            lowered = landing.casefold().split("?", 1)[0]
+            if landing and (lowered.endswith(".pdf") or "/bitstreams/" in lowered and lowered.endswith("/download")):
+                if landing not in pdf_urls:
+                    pdf_urls.append(landing)
         records.append(
             {
                 "id": identifier,
@@ -300,7 +329,9 @@ def _openalex_records(payload: dict) -> List[dict]:
                     if doi
                     else _clean(location.get("landing_page_url") or item.get("id") or "")
                 ),
-                "pdf_url": _clean(location.get("pdf_url") or ""),
+                "pdf_url": pdf_urls[0] if pdf_urls else "",
+                "pdf_urls": pdf_urls,
+                "fulltext_landing_urls": fulltext_landing_urls,
                 "citation_count": int(item.get("cited_by_count", 0) or 0),
                 "open_access": dict(item.get("open_access") or {}),
                 "topics": [
@@ -323,6 +354,25 @@ def _merge_record(existing: dict, incoming: dict) -> dict:
     for name in ("title", "year", "journal", "landing_url", "pdf_url", "open_access", "topics"):
         if not merged.get(name) and incoming.get(name):
             merged[name] = incoming[name]
+    pdf_urls = []
+    for source_record in (existing, incoming):
+        for url in source_record.get("pdf_urls", ()) or ():
+            cleaned = _clean(url)
+            if cleaned and cleaned not in pdf_urls:
+                pdf_urls.append(cleaned)
+        single = _clean(source_record.get("pdf_url") or "")
+        if single and single not in pdf_urls:
+            pdf_urls.append(single)
+    merged["pdf_urls"] = pdf_urls
+    if pdf_urls:
+        merged["pdf_url"] = pdf_urls[0]
+    landing_urls = []
+    for source_record in (existing, incoming):
+        for url in source_record.get("fulltext_landing_urls", ()) or ():
+            cleaned = _clean(url)
+            if cleaned and cleaned not in landing_urls:
+                landing_urls.append(cleaned)
+    merged["fulltext_landing_urls"] = landing_urls
     sources = set(str(merged.get("source", "")).split("+")) | set(
         str(incoming.get("source", "")).split("+")
     )
@@ -334,18 +384,19 @@ def _merge_record(existing: dict, incoming: dict) -> dict:
     return merged
 
 
-def search_public_metadata(
+def _search_public_records(
     request: AcademicSearchRequest,
     getter: Callable[[str], dict] = _get_json,
 ) -> List[dict]:
-    """Search selected public APIs and return DOI-deduplicated metadata."""
+    """Search selected public APIs and return all DOI-deduplicated candidates."""
     plan = build_advanced_search_plan(request)
     records: List[dict] = []
+    pool_size = max(20, request.max_results * 5)
     if "crossref" in plan.automatic_sources:
         params = {
             "query.bibliographic": plan.canonical_query,
-            "rows": request.max_results,
-            "select": "DOI,title,container-title,published-print,published-online,issued,abstract,is-referenced-by-count,type",
+            "rows": pool_size,
+            "select": "DOI,title,container-title,published-print,published-online,issued,abstract,is-referenced-by-count,type,link",
         }
         filters = ["type:journal-article"]
         if request.year_from:
@@ -355,7 +406,7 @@ def search_public_metadata(
         params["filter"] = ",".join(filters)
         records.extend(_crossref_records(getter("{}?{}".format(CROSSREF_WORKS, urlencode(params)))))
     if "openalex" in plan.automatic_sources:
-        params = {"search": plan.canonical_query, "per-page": request.max_results}
+        params = {"search": plan.canonical_query, "per-page": pool_size}
         filters = ["type:article"]
         if request.year_from:
             filters.append("from_publication_date:{}-01-01".format(request.year_from))
@@ -370,13 +421,29 @@ def search_public_metadata(
         if not key:
             continue
         merged[key] = _merge_record(merged[key], record) if key in merged else record
-    ordered = sorted(
-        merged.values(),
-        key=lambda item: (
-            bool(item.get("abstract")),
-            int(item.get("citation_count", 0) or 0),
-            int(item.get("year", 0) or 0),
-        ),
-        reverse=True,
+    return list(merged.values())
+
+
+def search_public_candidate_pool(
+    request: AcademicSearchRequest,
+    getter: Callable[[str], dict] = _get_json,
+) -> List[dict]:
+    """Return a bounded pool so inaccessible PDFs can be replaced automatically."""
+
+    return _search_public_records(request, getter=getter)
+
+
+def search_public_metadata(
+    request: AcademicSearchRequest,
+    getter: Callable[[str], dict] = _get_json,
+) -> List[dict]:
+    """Return the top at-most-five metadata records for compatibility callers."""
+
+    from .learning_policy import select_learning_records
+
+    selected, _excluded = select_learning_records(
+        request,
+        _search_public_records(request, getter=getter),
+        limit=request.max_results,
     )
-    return ordered[: request.max_results]
+    return selected

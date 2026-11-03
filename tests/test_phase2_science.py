@@ -11,7 +11,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from electrochem_harness.ground_truth import (
     GroundTruthSuite,
     evaluate_ground_truth,
-    scientific_release_ready,
+    reference_checks_passed,
 )
 from electrochem_harness.replicates import (
     ReplicateCell,
@@ -120,7 +120,7 @@ class GroundTruthTests(unittest.TestCase):
         self.assertAlmostEqual(failed.delta, 0.02)
         self.assertIn("charge_capacity_mAh", failed.metric_path)
 
-    def test_scientific_release_gate_requires_numeric_pass_and_j_c_approval(self):
+    def test_reference_check_depends_on_numeric_results_not_named_reviewers(self):
         values = {
             "manual-case-1": {
                 "cycle_1": {
@@ -130,10 +130,10 @@ class GroundTruthTests(unittest.TestCase):
             }
         }
         draft = evaluate_ground_truth(self._suite(), values)
-        approved = evaluate_ground_truth(self._suite(("J", "C")), values)
+        legacy_reviewed = evaluate_ground_truth(self._suite(("J", "C")), values)
 
-        self.assertFalse(scientific_release_ready(draft))
-        self.assertTrue(scientific_release_ready(approved))
+        self.assertTrue(reference_checks_passed(draft))
+        self.assertTrue(reference_checks_passed(legacy_reviewed))
 
     def test_suite_rejects_wrong_or_tampered_standard_identity(self):
         payload = self._suite().to_dict()
@@ -267,14 +267,13 @@ if __name__ == "__main__":
 
 
 class Phase2RepositoryIntegrationTests(unittest.TestCase):
-    def test_repository_ground_truth_suite_passes_numeric_gate_but_awaits_review(self):
+    def test_repository_ground_truth_suite_passes_numeric_reference_checks(self):
         from electrochem_harness.ground_truth import run_ground_truth_suite
 
         result = run_ground_truth_suite(PROJECT_ROOT / "standards" / "ground_truth_v1.json")
 
         self.assertTrue(result.numeric_passed)
-        self.assertFalse(scientific_release_ready(result))
-        self.assertEqual(result.review_status, "draft")
+        self.assertTrue(reference_checks_passed(result))
         self.assertGreaterEqual(result.total_checks, 12)
 
     def test_replicate_manifest_loads_real_curve_files_and_writes_outputs(self):

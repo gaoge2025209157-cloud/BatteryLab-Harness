@@ -34,7 +34,7 @@ $AllowedFiles = @(
     'SECURITY.md',
     'VERSION',
     'CHANGELOG.md',
-    'RELEASE_NOTES_v0.7.0-rc1.md',
+    'RELEASE_NOTES_v0.7.0-rc2.md',
     'TEAM_WORK_PACKAGES.md',
     'LICENSE.txt'
 )

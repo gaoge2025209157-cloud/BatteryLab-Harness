@@ -27,7 +27,7 @@ from .ground_truth import (
     evaluate_ground_truth,
     load_ground_truth_suite,
     run_ground_truth_suite,
-    scientific_release_ready,
+    reference_checks_passed,
 )
 from .replicates import (
     ReplicateCell,
@@ -213,7 +213,7 @@ __all__ = [
     "load_replicate_manifest",
     "run_ground_truth_suite",
     "run_replicate_manifest",
-    "scientific_release_ready",
+    "reference_checks_passed",
     "scientific_standard_hash",
     "scientific_standard_identity",
     "scientific_standard_manifest",

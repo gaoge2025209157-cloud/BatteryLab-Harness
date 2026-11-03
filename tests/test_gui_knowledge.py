@@ -59,13 +59,14 @@ class KnowledgeAssistantDialogTests(unittest.TestCase):
         self.assertFalse(dialog.busy)
         box.showerror.assert_called_once()
 
-    def test_main_gui_exposes_knowledge_assistant_button(self):
+    def test_main_gui_exposes_only_the_unified_research_workflow(self):
         from electrochem_harness.gui import ElectrochemApp
 
         app = ElectrochemApp(self.root, PROJECT_ROOT)
         try:
-            self.assertEqual("文献知识助手", app.knowledge_assistant_button.cget("text"))
-            self.assertTrue(callable(app.open_knowledge_assistant))
+            self.assertFalse(hasattr(app, "knowledge_assistant_button"))
+            self.assertEqual("自动研究与分析（充放电）", app.six_step_button.cget("text"))
+            self.assertTrue(callable(app.open_six_step))
         finally:
             app._cancel_polling()
             for widget in self.root.winfo_children():

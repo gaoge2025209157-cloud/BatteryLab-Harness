@@ -154,14 +154,7 @@ def _render_literature_and_value(payload, research_profile, literature_result):
 
 
 def render_readable_summary(payload, research_profile=None, literature_result=None) -> str:
-    """Render the decision-facing result in plain text.
-
-    The detailed Markdown remains an auditable attachment.  This view is kept
-    deliberately short so the GUI answers only four questions: what are the
-    numbers, what do they mean, what can the data support, and what should be
-    done next.  Every interpretation carries its basis and any usable DOI in
-    the same paragraph instead of sending the reader to a separate appendix.
-    """
+    """Render a decision-facing plain-text analysis with auditable limits."""
 
     report = payload.get("report", {})
     cycles = list(report.get("cycles", ()))
@@ -175,84 +168,169 @@ def render_readable_summary(payload, research_profile=None, literature_result=No
     direct = [record for record in verified if record.get("match_level") == "direct"]
     references = direct or verified
 
-    lines = ["关键指标"]
-    lines.append("完整循环：{} 圈；未完成循环：{} 圈".format(len(completed), len(cycles) - len(completed)))
-    if completed:
-        first, last = completed[0], completed[-1]
-        first_capacity = first.get("discharge_specific_capacity_mAh_g")
-        last_capacity = last.get("discharge_specific_capacity_mAh_g")
-        retention = last.get("capacity_retention")
-        efficiencies = [
-            item.get("coulombic_efficiency")
-            for item in completed
-            if item.get("coulombic_efficiency") is not None
-        ]
-        lines.append(
-            "放电比容量：{} → {} mAh/g；容量保持率：{}".format(
-                _number(first_capacity), _number(last_capacity), _percent(retention)
-            )
-        )
-        if efficiencies:
-            lines.append("库仑效率范围：{:.2%}–{:.2%}".format(min(efficiencies), max(efficiencies)))
-        voltage_gaps = [
-            item.get("average_charge_voltage_V") - item.get("average_discharge_voltage_V")
-            for item in completed
-            if item.get("average_charge_voltage_V") is not None
-            and item.get("average_discharge_voltage_V") is not None
-        ]
-        if voltage_gaps:
-            lines.append("末个完整循环平均充放电电压差：{:.3f} V".format(voltage_gaps[-1]))
+    def metric(item, *names):
+        for name in names:
+            value = item.get(name)
+            if value is not None:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return None
+        return None
 
-        lines.extend(["", "简要结论与科学依据"])
-        if first_capacity is not None and last_capacity is not None:
-            direction = "下降" if last_capacity < first_capacity else "未下降"
-            lines.append(
-                "在当前测试区间内，放电比容量{}。依据：首末完整循环由 {:.1f} 变为 {:.1f} mAh/g，保持率为 {}。".format(
-                    direction, first_capacity, last_capacity, _percent(retention)
-                )
-            )
-        if efficiencies:
-            lines.append(
-                "充放电可逆性以库仑效率范围描述。依据：CE = 放电容量/充电容量，本次为 {:.2%}–{:.2%}；该指标不能单独确定副反应机理。".format(
-                    min(efficiencies), max(efficiencies)
-                )
-            )
+    lines = ["数据质量与范围"]
+    lines.append("有效完整循环：{} 圈；未完成或未配对循环：{} 圈。".format(len(completed), len(cycles) - len(completed)))
+    if report.get("duration_h") is not None:
+        lines.append("测试时长：{:.3g} h；电压范围：{} V。".format(
+            float(report["duration_h"]),
+            "—" if not report.get("voltage_range_V") else "{:.3f}–{:.3f}".format(*report["voltage_range_V"]),
+        ))
+    if issues:
+        lines.append("数据提醒：{}".format("；".join(str(item.get("message", "")) for item in issues[:4])))
     else:
-        lines.extend(["", "简要结论与科学依据", "当前不能评价循环趋势。依据：没有识别到完整充放电循环。"])
+        lines.append("数据提醒：未发现当前规则能够识别的阻断问题；这不替代对原始曲线和设备记录的人工抽查。")
+
+    lines.extend(["", "关键指标全景"])
+    if not completed:
+        lines.append("没有完整充放电循环，容量保持、效率趋势、电压趋势和能量指标暂不成立。")
+    else:
+        first, last = completed[0], completed[-1]
+        discharge = [metric(item, "discharge_specific_capacity_mAh_g", "specific_discharge_capacity_mAh_g") for item in completed]
+        charge = [metric(item, "charge_specific_capacity_mAh_g", "specific_charge_capacity_mAh_g") for item in completed]
+        ce = [metric(item, "coulombic_efficiency") for item in completed]
+        avg_charge = [metric(item, "average_charge_voltage_V") for item in completed]
+        avg_discharge = [metric(item, "average_discharge_voltage_V") for item in completed]
+        gaps = [
+            metric(item, "voltage_gap_V")
+            if metric(item, "voltage_gap_V") is not None
+            else (
+                metric(item, "average_charge_voltage_V") - metric(item, "average_discharge_voltage_V")
+                if metric(item, "average_charge_voltage_V") is not None and metric(item, "average_discharge_voltage_V") is not None
+                else None
+            )
+            for item in completed
+        ]
+        charge_plateau = [metric(item, "charge_plateau_voltage_V") for item in completed]
+        discharge_plateau = [metric(item, "discharge_plateau_voltage_V") for item in completed]
+        specific_discharge_energy = [
+            capacity * voltage if capacity is not None and voltage is not None else None
+            for capacity, voltage in zip(discharge, avg_discharge)
+        ]
+        specific_charge_energy = [
+            capacity * voltage if capacity is not None and voltage is not None else None
+            for capacity, voltage in zip(charge, avg_charge)
+        ]
+        energy_efficiency = [
+            out_energy / in_energy if out_energy is not None and in_energy not in (None, 0) else None
+            for out_energy, in_energy in zip(specific_discharge_energy, specific_charge_energy)
+        ]
+        retention = metric(last, "capacity_retention")
+
+        if discharge[0] is not None and discharge[-1] is not None:
+            lines.append("放电比容量：首个 {:.1f}，末个 {:.1f} mAh/g；变化 {:+.1f} mAh/g；容量保持率 {}。".format(
+                discharge[0], discharge[-1], discharge[-1] - discharge[0], _percent(retention)
+            ))
+        if charge[0] is not None and charge[-1] is not None:
+            lines.append("充电比容量：首个 {:.1f}，末个 {:.1f} mAh/g。".format(charge[0], charge[-1]))
+        valid_ce = [value for value in ce if value is not None]
+        if valid_ce:
+            lines.append("库仑效率：首个 {:.2%}，末个 {:.2%}，平均 {:.2%}，范围 {:.2%}–{:.2%}。".format(
+                valid_ce[0], valid_ce[-1], sum(valid_ce) / len(valid_ce), min(valid_ce), max(valid_ce)
+            ))
+        valid_discharge_v = [value for value in avg_discharge if value is not None]
+        valid_charge_v = [value for value in avg_charge if value is not None]
+        if valid_discharge_v:
+            lines.append("平均放电电压：首个 {:.3f}，末个 {:.3f} V；变化 {:+.3f} V。".format(
+                valid_discharge_v[0], valid_discharge_v[-1], valid_discharge_v[-1] - valid_discharge_v[0]
+            ))
+        if valid_charge_v:
+            lines.append("平均充电电压：首个 {:.3f}，末个 {:.3f} V；变化 {:+.3f} V。".format(
+                valid_charge_v[0], valid_charge_v[-1], valid_charge_v[-1] - valid_charge_v[0]
+            ))
+        valid_gaps = [value for value in gaps if value is not None]
+        if valid_gaps:
+            lines.append("平均充放电电压差：首个 {:.3f}，末个 {:.3f} V；变化 {:+.3f} V，可用于描述极化趋势但不能单独归因。".format(
+                valid_gaps[0], valid_gaps[-1], valid_gaps[-1] - valid_gaps[0]
+            ))
+        valid_discharge_plateau = [value for value in discharge_plateau if value is not None]
+        valid_charge_plateau = [value for value in charge_plateau if value is not None]
+        if valid_discharge_plateau:
+            lines.append("主放电平台：首个 {:.3f}，末个 {:.3f} V；漂移 {:+.3f} V。".format(
+                valid_discharge_plateau[0], valid_discharge_plateau[-1], valid_discharge_plateau[-1] - valid_discharge_plateau[0]
+            ))
+        else:
+            lines.append("主放电平台：当前数据未提供可计算的平台容量分布。")
+        if valid_charge_plateau:
+            lines.append("主充电平台：首个 {:.3f}，末个 {:.3f} V；漂移 {:+.3f} V。".format(
+                valid_charge_plateau[0], valid_charge_plateau[-1], valid_charge_plateau[-1] - valid_charge_plateau[0]
+            ))
+        else:
+            lines.append("主充电平台：当前数据未提供可计算的平台容量分布。")
+        valid_specific_energy = [value for value in specific_discharge_energy if value is not None]
+        if valid_specific_energy:
+            lines.append("按文件比容量口径估算的放电比能量：首个 {:.1f}，末个 {:.1f} Wh/kg；变化 {:+.1f} Wh/kg。依据：比容量×容量加权平均放电电压。".format(
+                valid_specific_energy[0], valid_specific_energy[-1], valid_specific_energy[-1] - valid_specific_energy[0]
+            ))
+            lines.append("能量口径限制：该值沿用文件中的质量分母，不能据此当作整电池能量密度；体积能量密度还需要电极或电芯体积。")
+        valid_energy_efficiency = [value for value in energy_efficiency if value is not None]
+        if valid_energy_efficiency:
+            lines.append("近似能量效率：首个 {:.2%}，末个 {:.2%}。依据：放电比能量/充电比能量。".format(
+                valid_energy_efficiency[0], valid_energy_efficiency[-1]
+            ))
+
+        lines.extend(["", "趋势与异常"])
+        if len(completed) < 2:
+            lines.append("只有一个完整循环，只能描述该圈指标，不能判断长期变化率或稳定性。")
+        else:
+            cycle_span = max(1, int(last.get("cycle", len(completed))) - int(first.get("cycle", 1)))
+            if discharge[0] is not None and discharge[-1] is not None:
+                slope = (discharge[-1] - discharge[0]) / cycle_span
+                rises = sum(1 for left, right in zip(discharge, discharge[1:]) if left is not None and right is not None and right > left)
+                lines.append("放电容量平均变化率：{:+.2f} mAh/g/圈；相邻循环中出现 {} 次容量回升，需结合化成、波动或数据分段核对。".format(slope, rises))
+            if valid_ce:
+                lines.append("效率稳定性：极差 {:.2%}；低效率或明显波动既可能来自不可逆反应，也可能来自循环划分、截止条件或接触异常。".format(max(valid_ce) - min(valid_ce)))
+            if len(valid_gaps) >= 2:
+                tendency = "增大" if valid_gaps[-1] > valid_gaps[0] else "未增大"
+                lines.append("极化表征量{}：平均电压差由 {:.3f} 变为 {:.3f} V。".format(tendency, valid_gaps[0], valid_gaps[-1]))
+
+        lines.extend(["", "数据支持的判断"])
+        lines.append("可以直接支持：容量、库仑效率、保持率、平均电压、平台位置、极化表征量及文件质量口径下比能量的数值与循环趋势。")
+        lines.append("不能直接支持：具体界面产物、电荷转移电阻、离子扩散系数、活化能、结构相变归属或唯一衰减机理。")
+        lines.append("结论强度：单个电池用于发现趋势和提出假设；重复性与批次稳定性需要至少3个同条件独立电池。")
+
+        lines.extend(["", "候选解释与判别依据"])
+        capacity_drop = discharge[0] is not None and discharge[-1] is not None and discharge[-1] < discharge[0] * 0.95
+        gap_growth = len(valid_gaps) >= 2 and valid_gaps[-1] - valid_gaps[0] > 0.05
+        low_ce = bool(valid_ce) and (sum(valid_ce) / len(valid_ce) < 0.98 or min(valid_ce) < 0.95)
+        if capacity_drop and gap_growth:
+            lines.append("候选解释A：动力学、界面接触或传输受限加剧。支持依据：容量下降同时平均电压差增大；缺失证据：分阶段EIS和压力记录。判别实验：固定其余条件，在首圈、稳定期和衰减后测EIS；若阻抗分量与电压差同步增长则支持，若不增长则削弱该解释。")
+        elif capacity_drop:
+            lines.append("候选解释A：活性物质利用率下降、反应库存损失、接触退化或结构变化均可能造成容量衰减。支持依据：容量下降；缺失证据：阻抗、结构和界面化学。判别实验：同一电池分阶段EIS并对循环前后样品做结构/界面表征，用不同证据组合排除替代解释。")
+        else:
+            lines.append("候选解释A：当前区间未见超过5%的容量下降，但循环长度仍不足以证明长期稳定。判别实验：延长循环并设置同条件平行电池，观察保持率和离散度是否维持。")
+        if low_ce:
+            lines.append("候选解释B：持续副反应、漏电/微短路或测试分段问题可能导致效率偏低。支持依据：本次CE水平或波动；缺失证据：空白/对照电池、原始电流与截止日志。判别实验：复核循环边界并设置电解质/电极对照；若对照中同样偏低则优先排查测试或共性界面问题。")
+        else:
+            lines.append("候选解释B：库仑效率未触发当前低效率阈值，但高CE不能排除缓慢副反应、接触损失或可逆容量逐步减少。")
 
     if references:
-        rendered = []
-        for record in references[:3]:
-            title = str(record.get("title") or "已核验文献").strip()
-            rendered.append("{}（DOI: {}）".format(title, record["doi"]))
+        rendered = ["{}（DOI: {}）".format(str(record.get("title") or "已核验文献").strip(), record["doi"]) for record in references[:3]]
         comparison = "直接可比" if direct else "仅背景相关"
-        lines.append("参考文献：{}；当前属于{}证据，比较时仍需对齐倍率、温度、载量和质量口径。".format("；".join(rendered), comparison))
+        lines.append("参考文献：{}；当前属于{}证据，性能对比仍需对齐倍率、温度、压力、载量、循环圈数和质量口径。".format("；".join(rendered), comparison))
     else:
-        lines.append("参考文献：本次没有获得DOI已核验且条件匹配的文献，因此不作领先、落后或机理定级。")
+        lines.append("参考文献：本次确定性摘要未获得已核验且条件匹配的原文知识；机理与性能水平需在原文学习和人工批准后补入最终指导。")
 
-    lines.extend(["", "实验数据能说明什么"])
-    if completed:
-        lines.append("可以说明：当前文件中的容量、效率、保持率、平均电压及其随循环的变化。")
-        lines.append("不能说明：仅凭充放电曲线不能确定界面成分、电荷转移阻抗、扩散系数或具体衰减机理。")
-    else:
-        lines.append("可以说明：数据格式或循环完整性存在需要先处理的问题。")
-        lines.append("不能说明：没有完整循环时不能评价容量保持和可逆性。")
-    if issues:
-        lines.append("质量提醒：{}".format("；".join(str(item.get("message", "")) for item in issues[:2])))
-
-    profile_text = "" if research_profile is None else " ".join(
-        str(value) for value in research_profile.to_dict().values()
-    ).casefold()
+    profile_text = "" if research_profile is None else " ".join(str(value) for value in research_profile.to_dict().values()).casefold()
     solid_state = any(key in profile_text for key in ("solid", "固态", "halide", "卤化物"))
-    lines.extend(["", "下一步怎么做"])
-    lines.append("1. 对照设备软件抽查一个完整循环，并补足至少3个同条件平行电池。")
+    lines.extend(["", "下一轮实验决策"])
+    lines.append("1. 重复性：制作至少3个同批、同载量、同电流、同温度电池；保留单电池散点，并比较均值、标准差和失效样本。")
     if solid_state:
-        lines.append("2. 在首圈、稳定期和衰减后测试EIS，同时记录温度、压力、载量和面容量。")
-        lines.append("3. 用循环前后XRD、Raman、XPS及截面SEM区分主体结构、界面化学和接触退化。")
+        lines.append("2. 单变量优先级：先固定正极配比和载量，只改变堆叠压力；记录面容量、平均电压差和分阶段EIS。支持结果：压力改善伴随极化与阻抗同步下降；反证结果：阻抗和容量对压力不敏感。")
+        lines.append("3. 界面判别：选取未循环、首圈后和明显衰减后样品做XPS/Raman及截面SEM。支持结果：新化学态或接触裂隙与衰减同步出现；反证结果：界面化学与形貌基本不变。")
     else:
-        lines.append("2. 在首圈、稳定期和衰减后测试EIS，判断阻抗变化是否与容量衰减同步。")
-        lines.append("3. 根据体系补充循环前后结构、成分和界面表征，并设置单变量对照组。")
-    lines.append("4. 文献比较前统一倍率、温度、载量、循环圈数和质量归一化口径。")
+        lines.append("2. 动力学判别：在首圈、稳定期和衰减后测EIS，保持温度、SOC和静置时间一致。支持结果：阻抗增长与极化、容量衰减同步；反证结果：阻抗基本不变。")
+        lines.append("3. 结构/界面判别：对循环前后样品做体系适用的XRD、Raman、XPS和形貌表征，并设置未循环对照。")
+    lines.append("4. 决策规则：一次只改变一个关键变量；每轮先写明支持结果与反证结果，再根据结果决定下一轮，而不是无差别增加测试。")
     return "\n".join(lines) + "\n"
 
 
@@ -437,27 +515,19 @@ def create_scientific_bundle(
         from .literature_knowledge import LiteratureKnowledgeStore
 
         knowledge_store = LiteratureKnowledgeStore(literature_knowledge_path)
-        update_result = None
-        if literature_result is not None and not literature_result.get("error"):
-            update_result = knowledge_store.update_from_search(
-                research_profile, literature_result
-            )
         payload["literature_knowledge"] = knowledge_store.summary(
-            research_profile, update_result=update_result
+            research_profile, update_result=None
         )
+        payload["literature_knowledge"]["write_policy"] = "metadata_and_abstract_discovery_results_are_not_persisted"
 
     if literature_markdown_path is not None:
         from .markdown_knowledge import MarkdownLiteratureKnowledgeStore
 
         markdown_store = MarkdownLiteratureKnowledgeStore(literature_markdown_path)
-        markdown_update = None
-        if literature_result is not None and not literature_result.get("error"):
-            markdown_update = markdown_store.update_from_search(
-                research_profile, literature_result
-            )
         payload["editable_literature_knowledge"] = markdown_store.summary(
-            research_profile, update_result=markdown_update
+            research_profile, update_result=None
         )
+        payload["editable_literature_knowledge"]["write_policy"] = "fulltext_llm_learning_only"
 
     report_path = target / "关键参数报告.md"
     report_path.write_text(

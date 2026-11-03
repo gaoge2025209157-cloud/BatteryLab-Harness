@@ -72,8 +72,8 @@ class KnowledgeAssistantDialog(tk.Toplevel):
             "exclusions": tk.StringVar(),
             "year_from": tk.StringVar(value="2018"),
             "year_to": tk.StringVar(value=current_year),
-            "max_results": tk.IntVar(value=20),
-            "max_documents": tk.IntVar(value=8),
+            "max_results": tk.IntVar(value=5),
+            "max_documents": tk.IntVar(value=5),
             "local_fulltext_dir": tk.StringVar(),
             "data_file": tk.StringVar(value=str(initial_data_file or "")),
             "auto_fetch_publisher_html": tk.BooleanVar(value=False),
@@ -98,7 +98,7 @@ class KnowledgeAssistantDialog(tk.Toplevel):
         ttk.Label(outer, text="LLM文献知识助手", style="Title.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(
             outer,
-            text="领域与问题 → 高级检索 → 校园网/本地全文 → 背景与图表参数 → 数据价值 → 缺失实验/表征 → candidate知识",
+            text="领域与问题 → 最多5篇高水平高相关论文 → 原文读取 → 背景/专业基础 → 参数逻辑 → 学习增量 → 人工批准",
             style="Hint.TLabel",
         ).grid(row=0, column=0, sticky="e")
 
@@ -147,8 +147,8 @@ class KnowledgeAssistantDialog(tk.Toplevel):
         ttk.Entry(search_box, textvariable=self.variables["year_from"], width=8).grid(row=6, column=1, sticky="w", pady=(8, 3))
         ttk.Label(search_box, text="至").grid(row=6, column=2, sticky="w", pady=(8, 3))
         ttk.Entry(search_box, textvariable=self.variables["year_to"], width=8).grid(row=6, column=3, sticky="w", pady=(8, 3))
-        ttk.Label(search_box, text="候选上限").grid(row=7, column=0, sticky="w", pady=3)
-        tk.Spinbox(search_box, from_=1, to=100, textvariable=self.variables["max_results"], width=8).grid(row=7, column=1, sticky="w", pady=3)
+        ttk.Label(search_box, text="本轮学习论文上限").grid(row=7, column=0, sticky="w", pady=3)
+        tk.Spinbox(search_box, from_=1, to=5, textvariable=self.variables["max_results"], width=8).grid(row=7, column=1, sticky="w", pady=3)
         ttk.Button(search_box, text="生成高级检索式", command=self.generate_search_plan).grid(row=8, column=0, columnspan=2, sticky="ew", pady=(10, 3), padx=(0, 3))
         ttk.Button(search_box, text="打开校园网数据库", command=self.open_database_pages).grid(row=8, column=2, columnspan=2, sticky="ew", pady=(10, 3), padx=(3, 0))
 
@@ -166,11 +166,11 @@ class KnowledgeAssistantDialog(tk.Toplevel):
             text="尝试通过当前校园网直接读取DOI出版商HTML（不使用浏览器Cookie）",
             variable=self.variables["auto_fetch_publisher_html"],
         ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 3))
-        ttk.Label(evidence, text="最多全文").grid(row=3, column=0, sticky="w", pady=3)
-        tk.Spinbox(evidence, from_=1, to=20, textvariable=self.variables["max_documents"], width=8).grid(row=3, column=1, sticky="w", pady=3)
+        ttk.Label(evidence, text="最多原文（≤5）").grid(row=3, column=0, sticky="w", pady=3)
+        tk.Spinbox(evidence, from_=1, to=5, textvariable=self.variables["max_documents"], width=8).grid(row=3, column=1, sticky="w", pady=3)
         ttk.Label(
             evidence,
-            text="支持HTML/TXT/MD；PDF需要可选pypdf。程序优先提取引言、图注、表格及带单位参数。",
+            text="只学习与高水平高相关候选匹配的原文。摘要不写库；PDF需可提取文本并含DOI或可匹配题名。",
             style="Hint.TLabel",
             wraplength=430,
         ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
@@ -374,25 +374,35 @@ class KnowledgeAssistantDialog(tk.Toplevel):
 
     def _render_reasoning(self, result):
         reasoning = result.reasoning
-        summary_lines = [
-            "综合结论",
-            "",
-            reasoning.get("summary", ""),
-            "",
-            "研究背景",
-            "",
+        summary_sections = [
+            "综合结论\n\n{}".format(reasoning.get("summary", "")),
+            self._format_objects(
+                "逐篇文章核心内容",
+                reasoning.get("article_core_findings", []),
+                (("core_finding", "核心发现"), ("source_id", "来源"), ("research_question", "研究问题"), ("method", "方法"), ("evidence_location", "正文位置"), ("limitations", "限制")),
+            ),
+            self._format_objects(
+                "领域背景知识",
+                reasoning.get("research_background", []),
+                (("claim", "背景"), ("source_ids", "来源"), ("evidence_level", "证据等级"), ("limitations", "限制")),
+            ),
+            self._format_objects(
+                "电化学专业基础知识",
+                reasoning.get("electrochemistry_foundations", []),
+                (("concept", "概念"), ("explanation", "原理"), ("source_ids", "来源"), ("evidence_level", "证据等级"), ("boundaries", "适用边界")),
+            ),
+            self._format_objects(
+                "与本实验体系相关的参数和科学逻辑",
+                reasoning.get("key_figures_tables", []),
+                (("parameter", "参数"), ("source_id", "来源"), ("location", "位置"), ("value", "数值"), ("unit", "单位"), ("conditions", "条件"), ("scientific_logic", "科学逻辑"), ("relevance_to_experiment", "与本实验关系")),
+            ),
+            self._format_objects(
+                "本轮新增认识与知识演进",
+                reasoning.get("learning_delta", []),
+                (("new_understanding", "新增认识"), ("relationship_to_prior", "与既有批准知识关系"), ("source_ids", "来源"), ("unresolved_question", "未解决问题")),
+            ),
         ]
-        for item in reasoning.get("research_background", []):
-            summary_lines.append("• {}（证据：{}；限制：{}）".format(
-                item.get("claim", ""), item.get("evidence_level", ""), item.get("limitations", "")
-            ))
-        summary_lines.extend(["", "关键图表参数", ""])
-        for item in reasoning.get("key_figures_tables", []):
-            summary_lines.append("• {} {} {}｜{}｜{}".format(
-                item.get("parameter", ""), item.get("value", ""), item.get("unit", ""),
-                item.get("location", ""), item.get("conditions", "")
-            ))
-        self._replace_output("\n".join(summary_lines))
+        self._replace_output("\n\n".join(summary_sections))
 
         value_text = self._format_objects(
             "当前数据的研究价值",
@@ -514,11 +524,12 @@ class KnowledgeAssistantDialog(tk.Toplevel):
             return
         preview = (
             "即将执行：\n"
-            "1. 使用Crossref/OpenAlex检索公开元数据（若已选择）；\n"
-            "2. 读取你选定目录内最多 {} 篇全文，必要时尝试校园网HTML；\n"
-            "3. 将研究问题、文献摘录、图表参数和压缩后的数据摘要发送到模型 {}；\n"
-            "4. 写入本地candidate知识，不自动批准。\n\n"
-            "不会发送API密钥、浏览器Cookie或完整原始大文件。是否批准本次联网与模型调用？"
+            "1. 使用Crossref/OpenAlex建立候选池，并按研究问题相关性和可审计期刊优先名单筛选；\n"
+            "2. 只读取最多 {} 篇与候选DOI/题名匹配的原文；无法取得原文时停止，不写入摘要知识；\n"
+            "3. 模型依次学习逐篇核心、领域背景、电化学基础、体系参数逻辑及相对既有批准知识的新增认识；\n"
+            "4. 结合当前数据指出价值、限制、缺失实验和表征；\n"
+            "5. 结果写入本地candidate审核队列，不自动批准。\n\n"
+            "不会发送API密钥或浏览器Cookie。远程模型只接收受限原文证据包；本地Qwen在本机处理。是否批准本次联网与模型调用？"
         ).format(request.max_documents, config.model)
         if not messagebox.askyesno("批准知识助手计划", preview, parent=self):
             return

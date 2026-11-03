@@ -30,6 +30,9 @@ PUBLIC_RESEARCH_FIELDS = frozenset(
         "test_current",
         "temperature",
         "normalization_basis",
+        "research_domain",
+        "research_background",
+        "research_question",
     }
 )
 
@@ -59,7 +62,14 @@ _BASE_ARTIFACTS = (
     "Origin_充放电曲线数据.csv",
     "origin_job.json",
 )
-_LITERATURE_ARTIFACTS = ("文献证据.json", "文献比较.csv")
+_LITERATURE_ARTIFACTS = (
+    "文献清单.json",
+    "文献学习结果.json",
+    "文献学习审计.json",
+    "研究结论与指导.txt",
+    "研究分析报告.html",
+)
+_LEGACY_LITERATURE_ARTIFACTS = ("文献证据.json", "文献比较.csv")
 _ORIGIN_ARTIFACTS = (
     "电化学分析.opju",
     "充放电曲线.png",
@@ -118,7 +128,11 @@ def build_analysis_plan(
 
     artifacts = list(_BASE_ARTIFACTS)
     if network_enabled:
-        artifacts.extend(_LITERATURE_ARTIFACTS)
+        artifacts.extend(
+            _LITERATURE_ARTIFACTS
+            if normalized_metadata.get("unified_research")
+            else _LEGACY_LITERATURE_ARTIFACTS
+        )
     if origin_enabled:
         mode = str(origin_plot_mode or "both").strip().casefold()
         if mode not in {"curve", "cycling", "both"}:
