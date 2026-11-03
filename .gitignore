@@ -6,6 +6,9 @@ __pycache__/
 venv/
 .env
 .env.*
+.deps/
+.pip-cache/
+
 
 # Kiro/local agent state
 .kiro/
@@ -22,6 +25,9 @@ knowledge/experiences.jsonl
 knowledge/literature_knowledge.jsonl
 knowledge/literature_knowledge.md
 knowledge/research_knowledge.md
+knowledge/research_profiles.json
+knowledge/paper_library/
+
 knowledge/runs/
 
 # Release artifacts are attached to GitHub Releases, not committed

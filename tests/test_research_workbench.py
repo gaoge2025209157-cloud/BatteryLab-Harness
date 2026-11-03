@@ -1,4 +1,5 @@
 import sys
+import sys
 import tempfile
 import tkinter as tk
 import unittest
@@ -35,6 +36,8 @@ class ResearchWorkbenchTests(unittest.TestCase):
             self.assertEqual(str(app.test_entry_buttons["charge_discharge"].cget("state")), "normal")
             self.assertFalse(hasattr(app, "phase1_button"))
             self.assertFalse(hasattr(app, "run_button"))
+            self.assertEqual(app.acceptance_button.cget("text"), "知识点与数据流程核对")
+            self.assertTrue(callable(app.acceptance_button.invoke))
             labels = []
 
             def collect(widget):
@@ -48,7 +51,9 @@ class ResearchWorkbenchTests(unittest.TestCase):
                     collect(child)
 
             collect(app.root)
-            self.assertEqual(labels.count("文献知识助手"), 1)
+            self.assertEqual(labels.count("文献知识助手"), 0)
+            self.assertEqual(labels.count("自动研究与分析（充放电）"), 1)
+            self.assertEqual(labels.count("知识点与数据流程核对"), 1)
         finally:
             app._cancel_polling()
             for widget in self.root.winfo_children():
@@ -120,8 +125,22 @@ class KnowledgeReviewTests(unittest.TestCase):
         return {
             "summary": "现有证据只支持提出界面演化假设。",
             "recommended_search_terms": [],
-            "research_background": [],
-            "key_figures_tables": [],
+            "article_core_findings": [
+                {"source_id": "10.1000/a", "research_question": "界面阻抗如何演化", "method": "EIS", "core_finding": "界面响应随循环变化", "evidence_location": "Figure 2", "limitations": "特定压力"},
+                {"source_id": "10.1000/b", "research_question": "界面产物是什么", "method": "XPS", "core_finding": "循环后出现新化学态", "evidence_location": "Figure 4", "limitations": "非原位"},
+            ],
+            "research_background": [
+                {"claim": "卤化物界面稳定性影响循环", "source_ids": ["10.1000/a"], "evidence_level": "fulltext_html", "limitations": "体系相关"}
+            ],
+            "electrochemistry_foundations": [
+                {"concept": "界面阻抗", "explanation": "交流响应可反映界面过程变化", "source_ids": ["10.1000/a"], "evidence_level": "fulltext_html", "boundaries": "不能脱离频率和拟合模型解释"}
+            ],
+            "key_figures_tables": [
+                {"source_id": "10.1000/a", "location": "Figure 2", "parameter": "interfacial resistance", "value": "变化", "unit": "ohm", "conditions": "同温同压", "scientific_logic": "阻抗变化反映动力学或接触变化", "relevance_to_experiment": "用于验证容量衰减假设"}
+            ],
+            "learning_delta": [
+                {"new_understanding": "应联用EIS和XPS", "relationship_to_prior": "首轮知识", "source_ids": ["10.1000/a", "10.1000/b"], "unresolved_question": "化学与接触贡献如何区分"}
+            ],
             "data_value_assessment": [{"finding": "容量下降", "value": "筛选线索", "evidence": "数据摘要", "confidence": "low", "limitations": "单电池"}],
             "missing_experiments": [{"question": "阻抗是否增长", "experiment": "分阶段EIS", "variables": "温度和压力", "expected_evidence": "阻抗分量变化", "priority": "high"}],
             "missing_characterization": [{"question": "界面产物是什么", "characterization": "XPS", "sampling": "循环前后", "expected_evidence": "化学态变化", "priority": "high"}],
@@ -158,6 +177,15 @@ class KnowledgeReviewTests(unittest.TestCase):
         from electrochem_harness.llm_provider import LLMResult
 
         reasoning = self._reasoning()
+        from electrochem_harness.fulltext import DocumentEvidence
+        records = [
+            {"id": "10.1000/a", "doi": "10.1000/a", "title": "Halide electrolyte interface impedance", "journal": "Nature Communications", "year": 2025, "abstract": "Halide electrolyte interface impedance."},
+            {"id": "10.1000/b", "doi": "10.1000/b", "title": "Halide electrolyte interface chemistry", "journal": "Advanced Energy Materials", "year": 2024, "abstract": "Halide electrolyte interface chemistry."},
+        ]
+        documents = [
+            DocumentEvidence(source_id=item["doi"], title=item["title"], doi=item["doi"], source_uri=item["doi"] + ".html", evidence_level="fulltext_html", background_excerpt="Halide electrolyte interface background. " * 20, methods_excerpt="Electrochemical method. " * 20, figure_table_evidence=("Figure full-text evidence",), body_excerpt="Halide electrolyte interface full-text discussion. " * 40, content_hash=("a" if index == 0 else "b") * 64, limitations=())
+            for index, item in enumerate(records)
+        ]
 
         class Provider:
             config = None
@@ -172,8 +200,8 @@ class KnowledgeReviewTests(unittest.TestCase):
                 Provider(),
                 run_root=Path(temp) / "runs",
                 knowledge_path=Path(temp) / "knowledge.md",
-                metadata_searcher=lambda request: [],
-                document_collector=lambda request, metadata: [],
+                metadata_searcher=lambda request: records,
+                document_collector=lambda request, metadata: documents,
                 progress_callback=lambda stage, message, details: events.append(stage),
             )
 

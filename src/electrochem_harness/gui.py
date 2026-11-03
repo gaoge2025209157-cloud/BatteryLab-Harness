@@ -284,9 +284,10 @@ class ElectrochemApp:
             "output_dir": tk.StringVar(),
             "origin_exe": tk.StringVar(),
             "search_literature": tk.BooleanVar(value=True),
+            "unified_research": tk.BooleanVar(value=True),
             "use_origin": tk.BooleanVar(value=True),
             "origin_plot_mode": tk.StringVar(value="both"),
-            "max_literature": tk.IntVar(value=50),
+            "max_literature": tk.IntVar(value=5),
         }
         for name, _, _ in METADATA_FIELDS:
             self.variables[name] = tk.StringVar()
@@ -322,7 +323,7 @@ class ElectrochemApp:
         ttk.Label(outer, text="电化学智能实验 Harness", style="Title.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(
             outer,
-            text="本地读取蓝电文本数据；原始文件不会上传。推荐使用「六步受控分析」：先看计划、再批准、失败可重跑。",
+            text="选择数据后单击一次，系统将自动调研、学习原文、分析数据、生成图文报告，并在报告后继续课题对话。",
             style="Hint.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(2, 10))
 
@@ -396,7 +397,7 @@ class ElectrochemApp:
         ).pack(anchor="w", pady=(0, 4))
         self.test_entry_buttons = {}
         entries = (
-            ("charge_discharge", "充放电 / 循环", self.open_six_step, True),
+            ("charge_discharge", "自动研究与分析（充放电）", self.open_six_step, True),
             ("performance_plots", "倍率 / dQdV / Arrhenius", lambda: self.open_plot_workspace("rate_capability"), True),
             ("eis", "EIS / 电导率", lambda: self.open_plot_workspace("eis_nyquist"), True),
             ("cv_lsv", "CV / LSV", lambda: self.open_plot_workspace("cv_lsv"), True),
@@ -417,16 +418,11 @@ class ElectrochemApp:
             if key == "charge_discharge":
                 self.six_step_button = button
         ttk.Separator(test_nav, orient="horizontal").pack(fill="x", pady=10)
-        self.knowledge_assistant_button = ttk.Button(
-            test_nav,
-            text="文献知识助手",
-            style="Accent.TButton",
-            command=self.open_knowledge_assistant,
-        )
-        self.knowledge_assistant_button.pack(fill="x", pady=2)
+        from .gui_acceptance import install_acceptance_center
+        self.acceptance_button = install_acceptance_center(self, test_nav)
         ttk.Label(
             test_nav,
-            text="充放电进入完整受控分析；其他已开放入口使用通用数据契约生成Nature风格图和审计记录。",
+            text="充放电流程会复用已保存的课题与测试参数。通常只需更换数据文件，即可自动完成调研、分析、绘图、报告和课题对话；知识复核可在报告后按需进行。",
             style="Hint.TLabel",
             wraplength=185,
         ).pack(anchor="w", pady=(10, 0))
@@ -475,7 +471,7 @@ class ElectrochemApp:
         controls = ttk.Frame(outer)
         controls.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         controls.columnconfigure(2, weight=1)
-        self.open_button = ttk.Button(controls, text="打开最近结果", command=self.open_output)
+        self.open_button = ttk.Button(controls, text="打开最近图文报告", command=self.open_output)
         self.open_button.grid(row=0, column=0, padx=(0, 6))
         self.knowledge_button = ttk.Button(
             controls, text="打开本地知识库", command=self.open_knowledge
@@ -534,7 +530,11 @@ class ElectrochemApp:
 
     def _load_analysis_preview(self, output_dir=None):
         output = str(output_dir or self.variables["output_dir"].get()).strip()
-        conclusion = Path(output) / "关键结论.txt" if output else None
+        if output:
+            final_guidance = Path(output) / "研究结论与指导.txt"
+            conclusion = final_guidance if final_guidance.is_file() else Path(output) / "关键结论.txt"
+        else:
+            conclusion = None
         if conclusion is None or not conclusion.is_file():
             self._replace_conclusion("尚未找到关键结论。完成受控分析后，摘要会自动显示在此处。")
             return False
@@ -782,19 +782,22 @@ class ElectrochemApp:
         )
 
     def open_knowledge(self):
-        from .markdown_knowledge import MarkdownLiteratureKnowledgeStore
+        from .knowledge_assistant import ResearchKnowledgeStore
 
-        target = MarkdownLiteratureKnowledgeStore(
-            self.project_root / "knowledge" / "literature_knowledge.md"
-        ).ensure_exists()
+        target = self.project_root / "knowledge" / "research_knowledge.md"
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(ResearchKnowledgeStore(target)._default(), encoding="utf-8")
         os.startfile(str(target.resolve()))
 
     def open_output(self):
         target = self.variables["output_dir"].get().strip()
         if not target or not Path(target).is_dir():
-            messagebox.showwarning("目录不存在", "分析结果目录尚未生成。")
+            messagebox.showwarning("结果不存在", "请先完成一次自动调研与分析。")
             return
-        os.startfile(str(Path(target).resolve()))
+        directory = Path(target).resolve()
+        report = directory / "研究分析报告.html"
+        os.startfile(str(report if report.is_file() else directory))
 
     def _on_root_destroy(self, event=None):
         if event is None or event.widget is self.root:

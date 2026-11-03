@@ -171,14 +171,23 @@ class ReadableDecisionSummaryTests(unittest.TestCase):
         }
         text = render_readable_summary(payload, profile, literature)
 
-        for heading in ("关键指标", "简要结论与科学依据", "实验数据能说明什么", "下一步怎么做"):
+        for heading in (
+            "数据质量与范围", "关键指标全景", "趋势与异常", "数据支持的判断",
+            "候选解释与判别依据", "下一轮实验决策",
+        ):
             self.assertIn(heading, text)
+        self.assertIn("平均放电电压", text)
+        self.assertIn("按文件比容量口径估算的放电比能量", text)
+        self.assertIn("Wh/kg", text)
+        self.assertIn("平均充放电电压差", text)
+        self.assertIn("主放电平台", text)
+        self.assertIn("判别实验", text)
         self.assertIn("依据：", text)
         self.assertIn("参考文献：", text)
         self.assertIn("10.1000/interface", text)
+        self.assertIn("不能据此当作整电池能量密度", text)
         self.assertNotIn("**", text)
         self.assertNotIn("##", text)
-        self.assertLessEqual(len(text.splitlines()), 28)
 
 
 if __name__ == "__main__":

@@ -33,7 +33,7 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertIn("start_gui.cmd", script)
         self.assertIn("start_gui_local_qwen_portable.cmd", script)
         self.assertIn("START_HERE_WINDOWS.md", script)
-        self.assertIn("RELEASE_NOTES_v0.7.0-rc1.md", script)
+        self.assertIn("RELEASE_NOTES_v0.7.0-rc2.md", script)
         self.assertIn("TEAM_WORK_PACKAGES.md", script)
         self.assertIn("Get-FileHash", script)
         self.assertTrue((PROJECT_ROOT / "src" / "electrochem_harness" / "electrochemical_plots.py").is_file())
@@ -52,7 +52,7 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertNotIn("D:\\AI\\电化学智能实验Harness", guide)
 
     def test_release_metadata_exists(self):
-        self.assertEqual((PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip(), "0.7.0-rc1")
+        self.assertEqual((PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip(), "0.7.0-rc2")
         self.assertTrue((PROJECT_ROOT / "CHANGELOG.md").is_file())
         self.assertTrue((PROJECT_ROOT / "LICENSE.txt").is_file())
 

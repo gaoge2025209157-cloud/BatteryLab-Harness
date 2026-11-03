@@ -85,50 +85,17 @@ class LiteratureKnowledgeStore:
         )
 
     def update_from_search(self, profile, search_result):
-        fingerprint = _profile_fingerprint(profile)
-        latest = self._latest()
-        stored = 0
-        updated = 0
-        rejected = 0
-        now = _now()
-        for source in search_result.get("records", []):
-            doi = str(source.get("doi") or "").strip().casefold()
-            if not doi or not source.get("doi_verified"):
-                rejected += 1
-                continue
-            key = "{}|{}".format(fingerprint, doi)
-            previous = latest.get(key)
-            record = {
-                "record_key": key,
-                "profile_fingerprint": fingerprint,
-                "profile": profile.to_dict(),
-                "doi": doi,
-                "title": source.get("title") or "",
-                "journal": source.get("journal") or "",
-                "year": source.get("year"),
-                "match_level": source.get("match_level") or "context_only",
-                "research_roles": list(source.get("research_roles") or []),
-                "metrics": dict(source.get("metrics") or {}),
-                "condition_matches": dict(source.get("condition_matches") or {}),
-                "abstract_excerpt": str(source.get("abstract") or "")[:4000],
-                "candidate_claims": _candidate_claims(source.get("abstract") or "", doi),
-                "doi_verified": True,
-                "verification_source": search_result.get("source") or "Crossref REST API",
-                "first_seen_at": previous.get("first_seen_at") if previous else now,
-                "last_seen_at": now,
-                "times_seen": int(previous.get("times_seen", 0)) + 1 if previous else 1,
-            }
-            self._append(record)
-            latest[key] = record
-            if previous:
-                updated += 1
-            else:
-                stored += 1
+        """Do not persist metadata/abstract discovery results as knowledge."""
+
         return {
-            "stored": stored,
-            "updated": updated,
-            "rejected_unverified": rejected,
-            "profile_fingerprint": fingerprint,
+            "stored": 0,
+            "updated": 0,
+            "rejected_unverified": sum(
+                1 for source in search_result.get("records", []) if not source.get("doi_verified")
+            ),
+            "skipped_discovery_only": len(search_result.get("records", [])),
+            "profile_fingerprint": _profile_fingerprint(profile),
+            "write_policy": "fulltext_llm_learning_only",
         }
 
     def summary(self, profile, update_result=None):

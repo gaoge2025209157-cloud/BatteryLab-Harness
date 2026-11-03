@@ -20,7 +20,7 @@ from .validation import ValidationResult, validate_run_outputs
 from .workflow import ApprovalRequired, WorkflowState, WorkflowStateMachine
 
 
-_NETWORK_ARTIFACTS = frozenset({"文献证据.json", "文献比较.csv"})
+_NETWORK_ARTIFACTS = frozenset({"文献清单.json", "文献学习结果.json", "文献学习审计.json", "研究结论与指导.txt", "研究分析报告.html", "文献证据.json", "文献比较.csv"})
 _ORIGIN_ARTIFACTS = frozenset(
     {"电化学分析.opju", "充放电曲线.png", "循环性能.png", "origin_status.json"}
 )

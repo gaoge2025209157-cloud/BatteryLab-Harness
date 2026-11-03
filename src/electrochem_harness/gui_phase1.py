@@ -43,9 +43,10 @@ class Phase1GuiController:
     real Origin instance.
     """
 
-    def __init__(self, project_root: Path, *, origin_launcher=None):
+    def __init__(self, project_root: Path, *, origin_launcher=None, progress_callback=None):
         self.project_root = Path(project_root).resolve()
         self.origin_launcher = origin_launcher
+        self.progress_callback = progress_callback
         self.preparation: Optional[Phase1Preparation] = None
         self.controlled_run: Optional[ControlledAnalysisRun] = None
         self.approval: Optional[ApprovalRecord] = None
@@ -80,6 +81,7 @@ class Phase1GuiController:
             return self.preparation
 
         metadata = _metadata(values)
+        metadata["unified_research"] = bool(values.get("unified_research"))
         metadata["output_dir"] = str(output)
         metadata["normalization_basis"] = (
             "仪器文件导出的比容量口径（质量分母需由设备方法记录核验）"
@@ -114,6 +116,7 @@ class Phase1GuiController:
             analysis_payload,
             self.project_root,
             origin_launcher=self.origin_launcher,
+            progress_callback=self.progress_callback,
         )
         controlled = ControlledAnalysisRun(
             plan,
@@ -180,6 +183,9 @@ _RESEARCH_FIELDS = (
     "test_current",
     "temperature",
     "normalization_basis",
+    "research_domain",
+    "research_background",
+    "research_question",
 )
 
 
@@ -326,7 +332,10 @@ def _form_fingerprint(values: Mapping[str, Any], source: Path) -> str:
         "search_literature": bool(values.get("search_literature")),
         "use_origin": bool(values.get("use_origin")),
         "origin_plot_mode": str(values.get("origin_plot_mode", "both") or "both").strip().casefold(),
-        "max_literature": int(values.get("max_literature", 50)),
+        "max_literature": int(values.get("max_literature", 5)),
+        "research_background": str(values.get("research_background", "")).strip(),
+        "local_fulltext_dir": str(values.get("local_fulltext_dir", "")).strip(),
+        "literature_year_from": int(values.get("literature_year_from", 2018) or 2018),
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -338,6 +347,7 @@ def _production_demo_registry(
     analysis_payload: Any,
     project_root: Path,
     origin_launcher=None,
+    progress_callback=None,
 ):
     """Backward-compatible wrapper around the Phase 5 production registry.
 
@@ -354,5 +364,6 @@ def _production_demo_registry(
             knowledge_markdown=Path(project_root) / "knowledge" / "literature_knowledge.md",
             origin_launcher=origin_launcher,
             origin_exe=str(values.get("origin_exe", "")).strip(),
+            progress_callback=progress_callback,
         )
     )

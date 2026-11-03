@@ -14,7 +14,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 from urllib.request import Request, urlopen
 
 
-MAX_DOCUMENT_BYTES = 8 * 1024 * 1024
+MAX_DOCUMENT_BYTES = 30 * 1024 * 1024
 SUPPORTED_LOCAL_TEXT = {".html", ".htm", ".txt", ".md"}
 HEAVY_DATA_KEYS = {
     "points",
@@ -39,6 +39,11 @@ def _bounded(text: str, limit: int) -> str:
     head = max(0, int(limit * 0.72))
     tail = max(0, limit - head - 30)
     return text[:head] + " … [内容已压缩] … " + text[-tail:]
+
+
+def _extract_doi(text: str) -> str:
+    match = re.search(r"10\.\d{4,9}/[-._;()/:A-Z0-9]+", str(text or ""), flags=re.IGNORECASE)
+    return match.group(0).rstrip(".,;)\"]}").casefold() if match else ""
 
 
 @dataclass(frozen=True)
@@ -221,10 +226,11 @@ def extract_html_evidence(
         limitations.append("No figure caption, table, or parameter-rich paragraph was extracted from HTML.")
     if not methods:
         limitations.append("No explicit methods section was detected.")
+    detected_doi = _compact(doi).casefold() or _extract_doi(html_text)
     return DocumentEvidence(
-        source_id=(doi or source_uri),
+        source_id=(detected_doi or source_uri),
         title=_compact(title or parser.title or "Untitled document"),
-        doi=_compact(doi).casefold(),
+        doi=detected_doi,
         source_uri=source_uri,
         evidence_level="fulltext_html",
         background_excerpt=background,
@@ -265,10 +271,11 @@ def _plain_text_evidence(
     if not background_lines:
         background_lines = lines[:10]
     digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+    detected_doi = _compact(doi).casefold() or _extract_doi(text)
     return DocumentEvidence(
-        source_id=doi or source_uri,
+        source_id=detected_doi or source_uri,
         title=title,
-        doi=doi.casefold(),
+        doi=detected_doi,
         source_uri=source_uri,
         evidence_level=evidence_level,
         background_excerpt=_bounded(" ".join(background_lines), 5000),
@@ -285,7 +292,7 @@ def extract_local_document(path, *, doi: str = "", title: str = "") -> DocumentE
     if not source.is_file():
         raise FileNotFoundError(source)
     if source.stat().st_size > MAX_DOCUMENT_BYTES:
-        raise ValueError("Document exceeds the 8 MiB extraction limit: {}".format(source.name))
+        raise ValueError("Document exceeds the 30 MiB extraction limit: {}".format(source.name))
     suffix = source.suffix.casefold()
     if suffix in {".html", ".htm"}:
         return extract_html_evidence(
@@ -305,10 +312,18 @@ def extract_local_document(path, *, doi: str = "", title: str = "") -> DocumentE
     if suffix == ".pdf":
         try:
             from pypdf import PdfReader  # optional dependency, never installed automatically
-        except ImportError as error:
-            raise RuntimeError(
-                "PDF extraction requires the optional pypdf package; alternatively export the paper as HTML or TXT."
-            ) from error
+        except ImportError:
+            import sys
+
+            local_dependencies = Path(__file__).resolve().parents[2] / ".deps"
+            if local_dependencies.is_dir() and str(local_dependencies) not in sys.path:
+                sys.path.insert(0, str(local_dependencies))
+            try:
+                from pypdf import PdfReader
+            except ImportError as error:
+                raise RuntimeError(
+                    "PDF已下载，但缺少pypdf解析组件；请将pypdf安装到项目的.deps目录后重试。"
+                ) from error
         reader = PdfReader(str(source))
         text = "\n".join((page.extract_text() or "") for page in reader.pages)
         return _plain_text_evidence(

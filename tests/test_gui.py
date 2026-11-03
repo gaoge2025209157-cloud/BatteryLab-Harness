@@ -128,36 +128,24 @@ class GuiInteractionTests(unittest.TestCase):
             finally:
                 root.destroy()
 
-    def test_analysis_and_environment_buttons_dispatch_argument_lists(self):
+    def test_complete_workflow_entry_replaces_direct_analysis_dispatch(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "cell.csv"
             source.write_text("data", encoding="utf-8")
             root, app = self._app()
             try:
-                values = {
-                    "input_file": str(source),
-                    "output_dir": str(Path(tmp) / "result"),
-                    "battery_system": "锂硫电池",
-                    "active_material": "S/C",
-                    "cell_type": "半电池",
-                    "counter_electrode": "Li",
-                    "test_current": "0.1",
-                    "temperature": "25",
-                }
-                for name, value in values.items():
-                    app.variables[name].set(value)
+                app.variables["input_file"].set(str(source))
+                app.variables["output_dir"].set(str(Path(tmp) / "result"))
+                self.assertFalse(hasattr(app, "run_button"))
+                with patch("electrochem_harness.gui_six_step.SixStepDialog") as dialog:
+                    app.open_six_step()
+                    dialog.assert_called_once()
+                    passed_values = dialog.call_args.args[2]
+                    self.assertTrue(passed_values["unified_research"])
+                    self.assertTrue(passed_values["search_literature"])
                 with patch.object(app, "_start_command") as start:
-                    app.run_analysis()
-                    analysis_command, kind = start.call_args.args
-                    self.assertEqual(kind, "analysis")
-                    self.assertIn("-SearchLiterature", analysis_command)
                     app.check_environment()
                     self.assertEqual(start.call_args.args[1], "check")
-                app.variables["temperature"].set("")
-                with patch("electrochem_harness.gui.messagebox.showerror") as show_error, patch.object(app, "_start_command") as start:
-                    app.run_analysis()
-                    show_error.assert_called_once()
-                    start.assert_not_called()
             finally:
                 root.destroy()
 

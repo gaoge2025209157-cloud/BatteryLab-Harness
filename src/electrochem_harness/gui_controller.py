@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
 
 from .gui_phase1 import Phase1GuiController, Phase1Preparation
-from .production_registry import NETWORK_ARTIFACTS, ORIGIN_ARTIFACTS
+from .production_registry import LEGACY_NETWORK_ARTIFACTS, NETWORK_ARTIFACTS, ORIGIN_ARTIFACTS
 from .workflow import ApprovalRequired
 
 
@@ -51,7 +51,7 @@ STEP_TITLES = {
     WizardStep.PLAN: "3. 分析计划",
     WizardStep.APPROVAL: "4. 独立批准",
     WizardStep.EXECUTE: "5. 受控执行",
-    WizardStep.RESULTS: "6. 结果、证据与审计",
+    WizardStep.RESULTS: "6. 知识审核、结论与课题对话",
 }
 
 _NEXT_STEP = {
@@ -106,7 +106,18 @@ def validate_form(values: Mapping[str, Any]) -> Tuple[str, ...]:
     if values.get("search_literature"):
         for name, label, _hint in METADATA_FIELDS:
             if _missing(values.get(name)):
-                errors.append("启用文献检索时必须填写：{}。".format(label))
+                errors.append("完整研究闭环必须填写：{}。".format(label))
+        if values.get("unified_research"):
+            for name, label in (
+                ("research_domain", "研究领域"),
+                ("research_background", "课题背景"),
+                ("research_question", "本轮科学问题"),
+            ):
+                if _missing(values.get(name)):
+                    errors.append("完整研究闭环必须填写：{}。".format(label))
+            fulltext_dir = str(values.get("local_fulltext_dir", "")).strip()
+            if fulltext_dir and not Path(fulltext_dir).is_dir():
+                errors.append("本地论文原文目录不存在。")
     for name, label, unit in (
         ("test_current", "测试电流", "mA"),
         ("temperature", "测试温度", "°C"),
@@ -124,11 +135,16 @@ def validate_form(values: Mapping[str, Any]) -> Tuple[str, ...]:
             except (TypeError, ValueError):
                 errors.append("{}只填写数值，单位固定为{}。".format(label, unit))
     try:
-        maximum = int(values.get("max_literature", 50))
-        if maximum < 1 or maximum > 200:
+        maximum = int(values.get("max_literature", 5 if values.get("unified_research") else 50))
+        upper = 5 if values.get("unified_research") else 200
+        if maximum < 1 or maximum > upper:
             raise ValueError
     except (TypeError, ValueError):
-        errors.append("候选 DOI 数量必须是 1–200 的整数。")
+        errors.append(
+            "每轮学习论文数量必须是 1–5 的整数。"
+            if values.get("unified_research")
+            else "候选 DOI 数量必须是 1–200 的整数。"
+        )
     origin_exe = str(values.get("origin_exe", "")).strip()
     if values.get("use_origin") and origin_exe and not Path(origin_exe).is_file():
         errors.append("指定的 Origin64.exe 不存在；可清空该项让程序自动查找。")
@@ -213,10 +229,13 @@ class SixStepWizard:
         project_root: Path,
         *,
         origin_launcher: Optional[Callable[..., Any]] = None,
+        progress_callback: Optional[Callable[[str, str, Mapping], None]] = None,
     ):
         self.project_root = Path(project_root)
         self._controller = Phase1GuiController(
-            self.project_root, origin_launcher=origin_launcher
+            self.project_root,
+            origin_launcher=origin_launcher,
+            progress_callback=progress_callback,
         )
         self._step = WizardStep.DATA
         self._values: Optional[Mapping[str, Any]] = None
@@ -478,7 +497,14 @@ class SixStepWizard:
                 "origin_job.json",
             )
         ]
-        evidence = [entry(name, network_enabled) for name in NETWORK_ARTIFACTS]
+        if plan is not None and plan.experiment_metadata.get("unified_research"):
+            report.extend((entry("研究结论与指导.txt"), entry("研究分析报告.html")))
+        network_artifacts = (
+            NETWORK_ARTIFACTS
+            if plan is not None and plan.experiment_metadata.get("unified_research")
+            else LEGACY_NETWORK_ARTIFACTS
+        )
+        evidence = [entry(name, network_enabled) for name in network_artifacts]
         expected = set(() if plan is None else plan.expected_artifacts)
         origin = [entry(name, origin_enabled and name in expected) for name in ORIGIN_ARTIFACTS]
         audit = [

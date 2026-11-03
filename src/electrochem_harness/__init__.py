@@ -27,7 +27,7 @@ from .ground_truth import (
     evaluate_ground_truth,
     load_ground_truth_suite,
     run_ground_truth_suite,
-    scientific_release_ready,
+    reference_checks_passed,
 )
 from .replicates import (
     ReplicateCell,
@@ -117,6 +117,19 @@ from .academic_search import (
     search_public_metadata,
 )
 from .fulltext import DataSummary, DocumentEvidence, extract_html_evidence, summarize_data_file
+from .context_management import (
+    ContextBudgetExceeded,
+    ContextBuildResult,
+    ContextBuilder,
+    ContextError,
+    ContextStore,
+    ContextValidationError,
+    cache_identity,
+    conditions_match,
+    estimate_tokens,
+    normalize_tool_result,
+    stable_hash,
+)
 from .knowledge_assistant import (
     KnowledgeAssistantRequest,
     KnowledgeAssistantRunResult,
@@ -200,7 +213,7 @@ __all__ = [
     "load_replicate_manifest",
     "run_ground_truth_suite",
     "run_replicate_manifest",
-    "scientific_release_ready",
+    "reference_checks_passed",
     "scientific_standard_hash",
     "scientific_standard_identity",
     "scientific_standard_manifest",
@@ -228,6 +241,18 @@ __all__ = [
     "find_origin",
     "launch_origin",
     "tool_declarations",
+    # Shared context management for every LLM boundary.
+    "ContextBudgetExceeded",
+    "ContextBuildResult",
+    "ContextBuilder",
+    "ContextError",
+    "ContextStore",
+    "ContextValidationError",
+    "cache_identity",
+    "conditions_match",
+    "estimate_tokens",
+    "normalize_tool_result",
+    "stable_hash",
     # LLM-assisted academic knowledge workflow.
     "AcademicSearchRequest",
     "AdvancedSearchPlan",

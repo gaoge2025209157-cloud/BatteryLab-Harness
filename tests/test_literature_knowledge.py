@@ -51,23 +51,24 @@ class LiteratureKnowledgeStoreTests(unittest.TestCase):
             ],
         }
 
-    def test_store_keeps_only_verified_doi_and_deduplicates_repeated_searches(self):
+    def test_store_rejects_all_metadata_only_updates(self):
         from electrochem_harness.literature_knowledge import LiteratureKnowledgeStore
 
         with tempfile.TemporaryDirectory() as tmp:
-            store = LiteratureKnowledgeStore(Path(tmp) / "literature.jsonl")
+            path = Path(tmp) / "literature.jsonl"
+            store = LiteratureKnowledgeStore(path)
             first = store.update_from_search(self._profile(), self._search_result())
             second = store.update_from_search(self._profile(), self._search_result())
             records = store.find(self._profile())
 
-        self.assertEqual(first["stored"], 1)
-        self.assertEqual(second["updated"], 1)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["doi"], "10.1000/interface")
-        self.assertEqual(records[0]["times_seen"], 2)
-        self.assertNotIn("10.1000/unverified", json.dumps(records))
+        self.assertFalse(path.exists())
+        self.assertEqual(first["stored"], 0)
+        self.assertEqual(second["updated"], 0)
+        self.assertEqual(first["skipped_discovery_only"], 2)
+        self.assertEqual(records, [])
+        self.assertEqual(first["write_policy"], "fulltext_llm_learning_only")
 
-    def test_store_is_scoped_by_complete_research_profile(self):
+    def test_metadata_updates_remain_empty_for_every_research_profile(self):
         from electrochem_harness.literature_knowledge import LiteratureKnowledgeStore
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -76,20 +77,20 @@ class LiteratureKnowledgeStoreTests(unittest.TestCase):
             same = store.find(self._profile())
             other = store.find(self._profile(material="Li6PS5Cl"))
 
-        self.assertEqual(len(same), 1)
+        self.assertEqual(same, [])
         self.assertEqual(other, [])
 
-    def test_mechanism_sentences_are_stored_as_candidates_not_facts(self):
+    def test_mechanism_sentences_from_abstracts_are_not_stored(self):
         from electrochem_harness.literature_knowledge import LiteratureKnowledgeStore
 
         with tempfile.TemporaryDirectory() as tmp:
-            store = LiteratureKnowledgeStore(Path(tmp) / "literature.jsonl")
-            store.update_from_search(self._profile(), self._search_result())
-            record = store.find(self._profile())[0]
+            path = Path(tmp) / "literature.jsonl"
+            store = LiteratureKnowledgeStore(path)
+            result = store.update_from_search(self._profile(), self._search_result())
 
-        self.assertEqual(record["candidate_claims"][0]["status"], "candidate")
-        self.assertIn("Interfacial resistance", record["candidate_claims"][0]["text"])
-        self.assertEqual(record["candidate_claims"][0]["source_doi"], "10.1000/interface")
+        self.assertFalse(path.exists())
+        self.assertEqual(result["stored"], 0)
+        self.assertEqual(store.find(self._profile()), [])
 
 
 class BackgroundSearchTests(unittest.TestCase):
@@ -195,7 +196,7 @@ class DoctoralReportTests(unittest.TestCase):
         self.assertIn("不能仅由恒流循环曲线反演", text)
         self.assertIn("复用 3 条", text)
 
-    def test_bundle_persists_verified_search_results_to_requested_knowledge_path(self):
+    def test_bundle_does_not_persist_verified_metadata_to_legacy_jsonl(self):
         from electrochem_harness.literature import ResearchProfile
         from electrochem_harness.sci_report import create_scientific_bundle
 
@@ -246,11 +247,15 @@ class DoctoralReportTests(unittest.TestCase):
                     max_literature=1,
                     literature_knowledge_path=knowledge_path,
                 )
-            stored = knowledge_path.read_text(encoding="utf-8")
+            exists = knowledge_path.exists()
             payload = json.loads(paths["json"].read_text(encoding="utf-8"))
 
-        self.assertIn("10.1000/stored", stored)
-        self.assertEqual(payload["literature_knowledge"]["reused_record_count"], 1)
+        self.assertFalse(exists)
+        self.assertEqual(payload["literature_knowledge"]["reused_record_count"], 0)
+        self.assertEqual(
+            payload["literature_knowledge"]["write_policy"],
+            "metadata_and_abstract_discovery_results_are_not_persisted",
+        )
 
 
 if __name__ == "__main__":

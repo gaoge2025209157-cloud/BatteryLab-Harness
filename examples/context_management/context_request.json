@@ -1,0 +1,142 @@
+{
+  "turn": 1,
+  "task": {
+    "task_id": "task-demo-001",
+    "session_id": "session-demo-001",
+    "goal": "判断第18循环容量下降是否需要进一步复核",
+    "success_criteria": [
+      "完成确定性质量检查",
+      "引用适用的批准规则或证据",
+      "给出下一步验证建议"
+    ],
+    "current_stage": "investigating",
+    "open_questions": [
+      "平行电池是否出现相同趋势"
+    ]
+  },
+  "experiment_profile": {
+    "battery_system": "lithium-sulfur",
+    "cell_type": "half-cell",
+    "active_material": "S/C composite",
+    "counter_electrode": "Li",
+    "active_mass_mg": 1.2,
+    "test_current_mA": 0.5,
+    "temperature_c": 25,
+    "planned_cycles": 100
+  },
+  "permissions": {
+    "local_analysis": true,
+    "network_access": false,
+    "formal_output": false
+  },
+  "latest_user_message": "第18循环容量下降比较明显，请告诉我下一步应该检查什么。",
+  "rule_cards": [
+    {
+      "rule_id": "RULE-TIME-001",
+      "version": "1.0",
+      "status": "approved",
+      "title": "时间不得倒退",
+      "applies_when": {},
+      "condition": "timestamp[i] >= timestamp[i-1]",
+      "severity": "blocking",
+      "impact": "时间积分及容量结果不可靠",
+      "recommended_action": "核对原始导出文件和设备记录",
+      "approved_by": [
+        "J",
+        "C"
+      ]
+    }
+  ],
+  "evidence_cards": [
+    {
+      "evidence_id": "EVIDENCE-DEMO-001",
+      "version": "1.0",
+      "status": "approved",
+      "claim": "容量突降需要结合相邻循环、平行电池和实验条件判断，不能仅凭单圈数据认定机理。",
+      "source_id": "doi:10.0000/demo",
+      "source_location": "Demonstration evidence only",
+      "evidence_level": "full_text",
+      "applies_when": {
+        "battery_system": "lithium-sulfur",
+        "cell_type": "half-cell"
+      },
+      "supports": [
+        "提出进一步核查建议"
+      ],
+      "does_not_support": [
+        "认定唯一失效机理"
+      ],
+      "verification_needed": "比较平行电池、温度记录和阻抗变化"
+    }
+  ],
+  "tool_catalog": [
+    {
+      "tool_id": "compare_adjacent_cycles",
+      "purpose": "比较目标循环与前后循环的容量和效率趋势",
+      "required_scope": "local_analysis",
+      "requires_fields": []
+    },
+    {
+      "tool_id": "calculate_specific_capacity",
+      "purpose": "根据活性物质质量计算比容量",
+      "required_scope": "local_analysis",
+      "requires_fields": [
+        "active_mass_mg"
+      ]
+    },
+    {
+      "tool_id": "search_literature_metadata",
+      "purpose": "联网检索候选文献元数据",
+      "requires_network": true
+    }
+  ],
+  "conversation_summary": {
+    "confirmed_decisions": [
+      "用户确认当前数据来自锂硫半电池"
+    ],
+    "user_corrections": [],
+    "completed_findings": [
+      "文件格式检查通过"
+    ],
+    "rejected_hypotheses": [],
+    "open_questions": [
+      "平行电池是否出现相同趋势"
+    ],
+    "next_intent": "先检查时间和相邻循环趋势"
+  },
+  "tool_results": [
+    {
+      "tool_id": "quality_check",
+      "call_id": "call-demo-001",
+      "status": "success",
+      "summary": "未发现时间倒退或关键字段缺失",
+      "facts": [
+        {
+          "name": "time_regression",
+          "value": false
+        }
+      ],
+      "warnings": [],
+      "limitations": [
+        "当前只有一个电池的数据"
+      ],
+      "artifact_refs": [
+        "quality_report.json"
+      ],
+      "result_hash": "demo-result-hash"
+    }
+  ],
+  "recent_messages": [
+    {
+      "role": "user",
+      "content": "第18循环容量下降了。"
+    }
+  ],
+  "environment": {
+    "provider": "local",
+    "model": "local-demo-model",
+    "network_available": true,
+    "origin_available": false,
+    "remaining_rounds": 5
+  }
+}

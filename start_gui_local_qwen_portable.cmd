@@ -42,21 +42,41 @@ if errorlevel 1 (
   )
 )
 
+set "PYTHON_CMD="
 where py >nul 2>nul
-if not errorlevel 1 (
-  py -3 "%~dp0run_gui.py"
-  goto :done
+if not errorlevel 1 set "PYTHON_CMD=py -3"
+if not defined PYTHON_CMD (
+  where python >nul 2>nul
+  if not errorlevel 1 set "PYTHON_CMD=python"
 )
-where python >nul 2>nul
-if not errorlevel 1 (
-  python "%~dp0run_gui.py"
-  goto :done
+if not defined PYTHON_CMD (
+  echo Python 3.10 or newer was not found.
+  echo Download it from: https://www.python.org/downloads/windows/
+  pause
+  exit /b 6
 )
 
-echo Python 3.10 or newer was not found.
-echo Download it from: https://www.python.org/downloads/windows/
-pause
-exit /b 6
+%PYTHON_CMD% -c "import sys; sys.path.insert(0, r'%~dp0.deps'); import pypdf" >nul 2>nul
+if errorlevel 1 (
+  echo PDF learning requires pypdf 5.0.0 in the project-local .deps folder.
+  echo The download is below 1 MB; installed files use only a few MB.
+  choice /C YN /N /M "Install the PDF reader into this project now? [Y/N] "
+  if errorlevel 2 exit /b 7
+  set "TMP=%~dp0.pip-tmp"
+  set "TEMP=%~dp0.pip-tmp"
+  set "PIP_CACHE_DIR=%~dp0.pip-tmp"
+  if not exist "%~dp0.pip-tmp" mkdir "%~dp0.pip-tmp"
+  %PYTHON_CMD% -m pip install --disable-pip-version-check --no-cache-dir --target "%~dp0.deps" pypdf==5.0.0
+  if errorlevel 1 (
+    echo PDF reader installation failed. Install pypdf 5.0.0 into .deps and try again.
+    pause
+    exit /b 8
+  )
+  if exist "%~dp0.pip-tmp" rmdir /s /q "%~dp0.pip-tmp"
+)
+
+%PYTHON_CMD% "%~dp0run_gui.py"
+goto :done
 
 :done
 if errorlevel 1 pause
