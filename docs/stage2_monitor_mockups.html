@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Harness-v2 阶段②监控面板方案</title>
+<style>
+  :root { color-scheme: light dark; --bg: Canvas; --fg: CanvasText; --muted: GrayText; --line: color-mix(in srgb, CanvasText 22%, Canvas); --ok: #197a43; --warn: #a86200; --accent: #1769aa; }
+  * { box-sizing: border-box; } body { margin: 32px auto; max-width: 1160px; padding: 0 24px 48px; background: var(--bg); color: var(--fg); font: 15px/1.5 "Microsoft YaHei UI", sans-serif; }
+  h1 { margin-bottom: 4px; } .lead { color: var(--muted); margin-top: 0; } .grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); } .card { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--bg); } .head { padding: 16px; border-bottom: 1px solid var(--line); } .body { padding: 16px; } .recommended { outline: 3px solid var(--accent); } .tag { font-size: 12px; border-radius: 99px; padding: 3px 8px; color: white; background: var(--accent); } .ok { color: var(--ok); } .warn { color: var(--warn); } .step { display:flex; gap:10px; padding: 8px 0; border-bottom: 1px dashed var(--line); } .dot { flex: 0 0 13px; height: 13px; border-radius: 50%; margin-top: 5px; background: var(--line); } .dot.ok { background: var(--ok); } .dot.active { background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent); } .meter { height: 8px; border-radius: 8px; background: var(--line); overflow:hidden; margin: 10px 0; } .meter > i { display:block; width:64%; height:100%; background:var(--accent); } .log { border: 1px solid var(--line); border-radius: 8px; padding: 9px; margin: 8px 0; font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; } .table { width:100%; border-collapse:collapse; font-size:13px; } .table td { border-bottom:1px solid var(--line); padding:7px 3px; } .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; } .stat { border:1px solid var(--line); border-radius:8px; padding:8px; } .stat b { display:block; font-size:20px; }
+</style>
+</head>
+<body>
+<h1>阶段②：检索与 PDF 学习监控</h1>
+<p class="lead">无论采用哪种视图，都显示：检索词和状态、PDF 页覆盖率、已送入 Codex 的证据范围、候选/拒收计数、需人工审核项目和可跳转页码。</p>
+<div class="grid">
+  <section class="card">
+    <div class="head"><span class="tag">方案 A</span><h2>紧凑阶段清单</h2><p>适合窗口较小、只想快速知道流程卡在哪里。</p></div>
+    <div class="body">
+      <div class="step"><i class="dot ok"></i><div><b>关键词检索</b><br><span class="ok">已完成</span> · 12 条元数据 · 3 个 DOI</div></div>
+      <div class="step"><i class="dot ok"></i><div><b>本地 PDF 读取</b><br><span class="ok">14 / 14 页</span> · 830 个文本块 · 无 OCR 缺页</div></div>
+      <div class="step"><i class="dot active"></i><div><b>Codex 候选提炼</b><br>当前：处理第 9 页性能与图注证据</div></div>
+      <div class="step"><i class="dot"></i><div><b>研究者审核</b><br>等待候选知识生成</div></div>
+      <div class="log">12:02:14 读取第 8 页
+12:02:15 定位 Fig. 6
+12:02:18 提炼候选，待本地校验</div>
+    </div>
+  </section>
+  <section class="card recommended">
+    <div class="head"><span class="tag">推荐 · 方案 B</span><h2>实时进度 + 证据清单</h2><p>适合实际审核。左侧监控流程，右侧立刻看到系统从哪页、哪段文字得到什么候选。</p></div>
+    <div class="body">
+      <div class="stats"><div class="stat"><b>14/14</b>PDF 页覆盖</div><div class="stat"><b>12</b>候选</div><div class="stat"><b>6</b>拒收</div></div>
+      <p><b>当前阶段：</b>Codex 候选提炼</p><div class="meter"><i></i></div>
+      <table class="table"><tr><td><b>PDF 第 8 页</b><br>152.2 mAh g⁻¹，1 C</td><td class="warn">候选<br>待核对构型</td></tr><tr><td><b>PDF 第 9 页 · Fig. 6b</b><br>NCM88 loading 6.95 mg cm⁻²</td><td class="ok">来源已定位</td></tr><tr><td><b>PDF 第 12 页</b><br>stack pressure ≈150 MPa</td><td class="warn">待确认适用范围</td></tr></table>
+      <p class="lead">点击任一条可打开对应页、完整证据片段、模型原始候选和拒收理由。</p>
+    </div>
+  </section>
+  <section class="card">
+    <div class="head"><span class="tag">方案 C</span><h2>证据时间线</h2><p>适合回顾一次长任务，强调审计和可重放。</p></div>
+    <div class="body">
+      <div class="step"><i class="dot ok"></i><div><b>12:01:10</b> 创建检索式<br><span class="lead">"P2O5 LiTaCl6 solid-state battery"</span></div></div>
+      <div class="step"><i class="dot ok"></i><div><b>12:01:16</b> Crossref 响应记录<br><span class="lead">12 条 · metadata_only</span></div></div>
+      <div class="step"><i class="dot ok"></i><div><b>12:02:03</b> PDF 覆盖完成<br><span class="lead">SHA-256 · 14 页 · 830 spans</span></div></div>
+      <div class="step"><i class="dot active"></i><div><b>12:02:18</b> Codex 返回候选<br><span class="lead">12 接收 · 6 拒收 · 审批未完成</span></div></div>
+      <div class="log">每个事件均保存输入哈希、版本、时间和状态。查看时不显示密钥、原始路径或完整 PDF。</div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

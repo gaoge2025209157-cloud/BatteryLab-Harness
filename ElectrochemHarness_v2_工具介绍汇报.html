@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ElectrochemHarness v2｜工具介绍</title>
+<style>
+/* ===========================================
+   VIEWPORT FITTING: MANDATORY BASE STYLES
+   =========================================== */
+html, body { height: 100%; overflow-x: hidden; }
+html { scroll-snap-type: y mandatory; scroll-behavior: smooth; }
+:root {
+  --title-size: clamp(1.5rem, 5vw, 4rem); --h2-size: clamp(1.25rem, 3.5vw, 2.5rem);
+  --h3-size: clamp(1rem, 2.5vw, 1.75rem); --body-size: clamp(.75rem, 1.35vw, 1.04rem);
+  --small-size: clamp(.65rem, 1vw, .875rem); --slide-padding: clamp(1rem, 4vw, 4rem);
+  --content-gap: clamp(.5rem, 2vw, 2rem); --element-gap: clamp(.25rem, 1vw, 1rem);
+  --ink: #13212b; --muted: #58707c; --paper: #f6f1e8; --paper-deep: #e9dfcf;
+  --blue: #0a6077; --cyan: #38b8bd; --rust: #cf6541; --gold: #e2a638; --line: rgba(19,33,43,.17);
+}
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--ink); background: var(--paper); font-family: "Microsoft YaHei UI", "Noto Sans SC", sans-serif; }
+.slide { width: 100vw; height: 100vh; height: 100dvh; overflow: hidden; scroll-snap-align: start; display: flex; flex-direction: column; position: relative; isolation: isolate; }
+.slide-content { flex: 1; display: flex; flex-direction: column; justify-content: center; max-height: 100%; overflow: hidden; padding: var(--slide-padding); }
+.card, .container, .content-box { max-width: min(90vw, 1120px); max-height: min(80vh, 700px); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: clamp(.5rem, 1.5vw, 1rem); }
+img, .image-container { max-width: 100%; max-height: min(50vh, 400px); object-fit: contain; }
+@media (max-height: 700px) { :root { --slide-padding: clamp(.75rem, 3vw, 2rem); --content-gap: clamp(.4rem, 1.5vw, 1rem); --title-size: clamp(1.25rem, 4.5vw, 2.5rem); --h2-size: clamp(1rem, 3vw, 1.75rem); } }
+@media (max-height: 600px) { :root { --slide-padding: clamp(.5rem, 2.5vw, 1.5rem); --content-gap: clamp(.3rem, 1vw, .75rem); --title-size: clamp(1.1rem, 4vw, 2rem); --body-size: clamp(.7rem, 1.2vw, .95rem); } .nav-dots,.keyboard-hint,.decorative { display:none; } }
+@media (max-height: 500px) { :root { --slide-padding: clamp(.4rem, 2vw, 1rem); --title-size: clamp(1rem, 3.5vw, 1.5rem); --h2-size: clamp(.9rem, 2.5vw, 1.25rem); --body-size: clamp(.65rem, 1vw, .85rem); } }
+@media (max-width: 600px) { :root { --title-size: clamp(1.25rem, 7vw, 2.5rem); } .grid { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { *,*::before,*::after { animation-duration:.01ms!important; transition-duration:.2s!important; } html { scroll-behavior:auto; } }
+
+/* Theme */
+.slide::before { content:""; position:absolute; inset:0; z-index:-2; background:linear-gradient(115deg, rgba(246,241,232,.98), rgba(233,223,207,.88)); }
+.slide::after { content:""; position:absolute; inset:0; z-index:-1; opacity:.17; pointer-events:none; background-image:linear-gradient(var(--line) 1px, transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px); background-size:34px 34px; mask-image:linear-gradient(to bottom, black, transparent); }
+.dark::before { background:radial-gradient(circle at 80% 15%, #0f6675 0, transparent 30%),linear-gradient(125deg,#0b2028,#142c35 55%,#122329); }
+.dark { color:#f5f0e6; }
+.dark::after { opacity:.22; --line: rgba(219,239,232,.28); }
+.tab { position:absolute; right:0; top:14%; writing-mode:vertical-rl; padding:clamp(.7rem,1.4vw,1.2rem) .55rem; border-radius:12px 0 0 12px; letter-spacing:.16em; font-size:var(--small-size); font-weight:800; color:#fff; background:var(--rust); }
+.tab.cyan { background:var(--blue); }.tab.gold { background:#9c6a13; }.tab.ink { background:#203d47; }
+.kicker { margin:0 0 .5rem; color:var(--rust); font:800 var(--small-size)/1.25 "Consolas",monospace; letter-spacing:.12em; }.dark .kicker { color:#edb84c; }
+h1,h2,h3,p { margin-top:0; } h1 { max-width:1050px; margin-bottom:.35em; font-size:var(--title-size); line-height:1.08; letter-spacing:-.035em; } h2 { font-size:var(--h2-size); line-height:1.13; margin-bottom:.6em; } h3 { font-size:var(--h3-size); line-height:1.2; margin-bottom:.45em; } p,li,td { font-size:var(--body-size); line-height:1.55; }.lead { max-width:850px; color:var(--muted); font-size:clamp(.9rem,1.8vw,1.3rem); line-height:1.6; }.dark .lead,.dark .muted { color:#c4d6d4; }
+.rule { width:min(780px,80vw); height:1px; margin:clamp(.65rem,1.5vh,1.25rem) 0; background:var(--line); }.dark .rule { background:rgba(255,255,255,.28); }
+.card { position:relative; padding:clamp(.75rem,1.7vw,1.4rem); border:1px solid var(--line); border-radius:8px; background:rgba(255,253,248,.76); box-shadow:5px 6px 0 rgba(19,33,43,.09); }.dark .card { background:rgba(12,32,39,.72); border-color:rgba(237,240,224,.18); box-shadow:5px 6px 0 rgba(0,0,0,.23); }
+.card strong { color:var(--blue); }.dark .card strong { color:#76d6d1; }.number { display:block; color:var(--rust); font:800 clamp(1.25rem,3vw,2.6rem)/1 "Consolas",monospace; margin-bottom:.32rem; }.dark .number { color:#e6b34c; }
+.chip { display:inline-block; margin:.15rem .2rem .1rem 0; padding:.28rem .55rem; border:1px solid currentColor; border-radius:99px; color:var(--blue); font-size:var(--small-size); font-weight:700; }.dark .chip { color:#83d9d2; }.chip.rust { color:var(--rust); }.chip.gold { color:#98620a; }.dark .chip.gold { color:#e9bd53; }
+.slide-footer { display:flex; justify-content:space-between; align-items:center; padding:0 var(--slide-padding) clamp(.55rem,1.2vw,1rem); color:var(--muted); font-size:var(--small-size); }.dark .slide-footer { color:#a7c0bd; }.slide-footer b { color:inherit; }
+.nav-dots { position:fixed; z-index:20; right:clamp(.6rem,1.7vw,1.4rem); top:50%; transform:translateY(-50%); display:grid; gap:7px; }.nav-dots button { width:9px; height:9px; padding:0; border:1px solid rgba(19,33,43,.4); border-radius:50%; background:rgba(255,255,255,.5); cursor:pointer; }.nav-dots button.active { transform:scale(1.45); background:var(--rust); border-color:var(--rust); }.counter { position:fixed; z-index:20; left:clamp(.8rem,2vw,1.5rem); bottom:clamp(.65rem,1.5vw,1.2rem); padding:.33rem .58rem; border:1px solid rgba(19,33,43,.2); border-radius:99px; background:rgba(246,241,232,.82); font:700 var(--small-size)/1 "Consolas",monospace; }
+
+/* Flow diagram */
+.flow-wrap { width:min(1250px,100%); margin:0 auto; display:grid; grid-template-columns:1fr; gap:clamp(.45rem,1vw,.8rem); }
+.flow-row { display:grid; grid-template-columns:1.05fr .6fr 1.05fr .6fr 1.05fr .6fr 1.05fr; align-items:center; gap:clamp(.25rem,.8vw,.7rem); }
+.flow-box { min-height:clamp(6.4rem,12vh,8.2rem); padding:clamp(.55rem,1vw,.85rem); border-radius:8px; border:1px solid rgba(255,255,255,.22); background:rgba(255,255,255,.09); }.flow-box h3 { margin:.15rem 0 .4rem; font-size:clamp(.8rem,1.45vw,1.18rem); }.flow-box p { margin:0; color:#d7e4e2; font-size:clamp(.63rem,1vw,.78rem); line-height:1.4; }.flow-box em { color:#f3c45b; font-style:normal; font-size:clamp(.58rem,.85vw,.7rem); font-weight:800; }.flow-arrow { position:relative; height:2px; background:#e6b64b; }.flow-arrow::after { content:""; position:absolute; right:-1px; top:50%; width:8px; height:8px; border-right:2px solid #e6b64b; border-top:2px solid #e6b64b; transform:translateY(-50%) rotate(45deg); }
+.flow-legend { display:flex; flex-wrap:wrap; gap:.45rem; align-items:center; justify-content:center; color:#d1e0dd; font-size:var(--small-size); }.legend-item { padding:.2rem .5rem; border-radius:99px; border:1px solid rgba(255,255,255,.24); }.legend-human { color:#ffd973; }.legend-local { color:#8be0db; }.legend-ai { color:#efad94; }
+@media (max-width:800px) { .flow-row { grid-template-columns:1fr; gap:.2rem; }.flow-arrow { width:2px; height:14px; margin:auto; }.flow-arrow::after { right:auto; bottom:-1px; left:50%; top:auto; transform:translateX(-50%) rotate(135deg); }.flow-box { min-height:0; } }
+
+/* Detail diagram and metrics */
+.lanes { width:min(1120px,100%); margin:0 auto; display:grid; grid-template-columns:repeat(3,1fr); gap:clamp(.65rem,1.5vw,1.2rem); }.lane { border-top:5px solid var(--blue); padding:clamp(.65rem,1.4vw,1.1rem); background:rgba(255,253,248,.68); }.lane:nth-child(2) { border-top-color:var(--rust); }.lane:nth-child(3) { border-top-color:var(--gold); }.lane h3 { margin-bottom:.42rem; }.lane ul { padding-left:1.15rem; margin:.45rem 0 0; }.lane li { margin:.23rem 0; }
+.metric-grid { width:min(1120px,100%); margin:0 auto; display:grid; grid-template-columns:repeat(4,1fr); gap:clamp(.5rem,1.2vw,1rem); }.metric { border-left:4px solid var(--blue); padding:.6rem .75rem; background:rgba(255,253,248,.7); }.metric:nth-child(2){border-color:var(--rust)}.metric:nth-child(3){border-color:var(--gold)}.metric:nth-child(4){border-color:var(--cyan)}.metric b { display:block; font:800 clamp(1.15rem,2.3vw,2rem)/1.1 "Consolas",monospace; margin:.22rem 0; }.metric small { color:var(--muted); font-size:var(--small-size); }
+@media(max-width:800px) { .lanes,.metric-grid { grid-template-columns:repeat(2,1fr); } } @media(max-width:500px) { .lanes,.metric-grid { grid-template-columns:1fr; } }
+.callout { border-left:5px solid var(--rust); padding:.75rem 1rem; background:rgba(207,101,65,.1); max-width:1050px; }.callout.dark-callout { border-color:#e8b747; background:rgba(232,183,71,.12); }
+.two-col { width:min(1120px,100%); margin:0 auto; display:grid; grid-template-columns:1fr 1fr; gap:clamp(.8rem,2vw,2rem); align-items:stretch; }.two-col ul { padding-left:1.2rem; }.two-col li { margin:.4rem 0; }.guard { border:1px solid var(--line); border-radius:8px; padding:clamp(.75rem,1.5vw,1.2rem); background:rgba(255,253,248,.7); }.guard h3::before { content:"↳ "; color:var(--rust); }.dark .guard { background:rgba(255,255,255,.07); border-color:rgba(255,255,255,.2); }
+.conclusion { width:min(1080px,100%); margin:0 auto; display:grid; grid-template-columns:1.15fr .85fr; gap:clamp(1rem,3vw,3rem); align-items:center; }.big-statement { font-size:clamp(1.4rem,3.3vw,3rem); font-weight:800; line-height:1.2; letter-spacing:-.035em; }.big-statement span { color:var(--rust); }.dark .big-statement span { color:#efb64f; }.timeline { border-left:2px solid var(--cyan); padding-left:1rem; }.timeline div { position:relative; margin:.65rem 0; font-size:var(--body-size); }.timeline div::before { content:""; position:absolute; left:calc(-1rem - 6px); top:.47em; width:10px; height:10px; border-radius:50%; background:var(--rust); }
+.reveal { opacity:0; transform:translateY(13px); transition:opacity .5s ease, transform .5s ease; }.slide.in-view .reveal { opacity:1; transform:translateY(0); }.slide.in-view .reveal:nth-child(2){transition-delay:.08s}.slide.in-view .reveal:nth-child(3){transition-delay:.16s}.slide.in-view .reveal:nth-child(4){transition-delay:.24s}
+</style>
+</head>
+<body>
+<nav class="nav-dots" aria-label="幻灯片导航"></nav><div class="counter" aria-live="polite">01 / 11</div>
+<main id="deck">
+  <section class="slide dark in-view" id="s1" aria-label="封面">
+    <div class="tab gold">工具概览</div><div class="slide-content">
+      <p class="kicker reveal">ELECTROCHEMISTRY · AUDITABLE AI WORKFLOW</p>
+      <h1 class="reveal">ElectrochemHarness v2<br>从原始曲线到可审计实验决策</h1>
+      <div class="rule reveal"></div>
+      <p class="lead reveal">面向电化学研究的本地工作台。它将课题建档、受控文献学习、确定性数据处理、Origin 作图和 Codex 课题评估串成一条自动化流程。</p>
+      <p class="reveal"><span class="chip">本地优先</span><span class="chip">单击运行</span><span class="chip gold">证据有边界</span><span class="chip rust">人机协同</span></p>
+    </div><footer class="slide-footer"><b>介绍汇报</b><span>使用方向键 / 滚轮 / 触屏翻页</span></footer>
+  </section>
+
+  <section class="slide" id="s2" aria-label="工程背景"><div class="tab">01 背景</div><div class="slide-content">
+    <p class="kicker reveal">WHY THIS TOOL EXISTS</p><h2 class="reveal">工程背景：实验数据、文献和判断之间存在断点</h2>
+    <div class="grid reveal">
+      <article class="card"><span class="number">01</span><h3>数据体量大</h3><p>充放电文件可含数万至数十万行。直接交给大模型既低效，也难以保证数值判断可复现。</p></article>
+      <article class="card"><span class="number">02</span><h3>文献比较易失真</h3><p>容量分母、构型、温度、倍率、压力和电压窗口不一致时，不能据此得出“更优”的结论。</p></article>
+      <article class="card"><span class="number">03</span><h3>作图与结论脱节</h3><p>曲线、Origin 工程、研究判断常分散在不同软件与文件中，实验迭代难以追溯。</p></article>
+      <article class="card"><span class="number">04</span><h3>模型需要受控</h3><p>大模型适合归纳文献、提出解释和设计判别实验，但不能代替数据计算与研究者判断。</p></article>
+    </div>
+    <p class="callout reveal"><b>工程目标：</b>先让程序计算，再让模型解释；先保留来源，再形成判断；把每次实验变成可复用的研究资产。</p>
+  </div><footer class="slide-footer"><span>ElectrochemHarness v2</span><span>工程背景</span></footer></section>
+
+  <section class="slide" id="s3" aria-label="功能"><div class="tab cyan">02 能力</div><div class="slide-content">
+    <p class="kicker reveal">WHAT IS ALREADY AVAILABLE</p><h2 class="reveal">已经具备的核心功能</h2>
+    <div class="grid reveal">
+      <article class="card"><h3>课题与实验建档</h3><p>保存课题名称、材料体系、关键词、实验条件与活性物质质量。已保存课题可重新打开并修改。</p><span class="chip">SQLite</span><span class="chip">Unicode</span></article>
+      <article class="card"><h3>本地 PDF 证据学习</h3><p>逐页提取本地 PDF 的文本片段与页码。仅发送有限证据片段，原 PDF 始终留在本地。</p><span class="chip">PyMuPDF</span><span class="chip">页码证据</span></article>
+      <article class="card"><h3>GCD 确定性分析</h3><p>自动识别完整循环，计算容量、电压、极化、库仑效率、容量保持率与异常审计。</p><span class="chip">CSV/TXT/TSV</span><span class="chip">可复算</span></article>
+      <article class="card"><h3>真实 Origin 输出</h3><p>调用已验证的 Origin 绘图引擎，输出正式 PNG 与可编辑的 .opju 工程，而非替代性图库。</p><span class="chip">Origin 2026</span><span class="chip">可编辑</span></article>
+      <article class="card"><h3>Codex 联网研究与评估</h3><p>围绕课题和特征检索学术线索，提炼知识，解释竞争假设，并提出下一轮单变量实验。</p><span class="chip rust">Codex</span><span class="chip rust">受限输入</span></article>
+      <article class="card"><h3>中文图文决策报告</h3><p>以五章学术叙事汇总数据事实、阶段定位、文献学习、证据边界和后续实验路线。</p><span class="chip gold">HTML</span><span class="chip gold">审计链</span></article>
+    </div>
+  </div><footer class="slide-footer"><span>已交付功能</span><span>本地工具 + Origin + Codex</span></footer></section>
+
+  <section class="slide dark" id="s4" aria-label="总流程图"><div class="tab gold">03 总流程</div><div class="slide-content">
+    <p class="kicker reveal">ONE-CLICK RESEARCH PIPELINE</p><h2 class="reveal">自动化主流程：四阶段、一条证据链</h2>
+    <div class="flow-wrap reveal" aria-label="从课题输入到报告的自动工作流程图">
+      <div class="flow-row">
+        <div class="flow-box"><em>① 研究者输入</em><h3>课题 / 数据</h3><p>课题名称、材料体系、关键词、条件、活性物质质量；选择原始数据与可选 PDF。</p></div><div class="flow-arrow"></div>
+        <div class="flow-box"><em>② 本地证据</em><h3>解析 / 检索</h3><p>文件哈希、PDF 分页提取；Crossref、OpenAlex 提供题录线索。</p></div><div class="flow-arrow"></div>
+        <div class="flow-box"><em>③ 程序先计算</em><h3>特征 / Origin</h3><p>CSV 分段与配对，计算 GCD 指标；生成 Origin 数据表、PNG、.opju。</p></div><div class="flow-arrow"></div>
+        <div class="flow-box"><em>④ 模型再判断</em><h3>Codex / 报告</h3><p>联网学习、特征解释、反证与实验建议；汇总为中文科研决策报告。</p></div>
+      </div>
+      <div class="flow-legend"><span class="legend-item legend-human">● 人工输入与复核</span><span class="legend-item legend-local">● 本地确定性工具</span><span class="legend-item legend-ai">● Codex 的受控判断</span><span class="legend-item">原始 CSV 不进入模型</span></div>
+    </div>
+    <p class="callout dark-callout reveal"><b>关键顺序不可颠倒：</b>原始数据 → 本地特征 → Codex。模型看到的是有单位、有定义、数量受限的结构化特征包，而不是逐点时间序列。</p>
+  </div><footer class="slide-footer"><span>单击“自动执行课题全流程”</span><span>四阶段总览</span></footer></section>
+
+  <section class="slide" id="s5" aria-label="流程和工具"><div class="tab">04 工具调用</div><div class="slide-content">
+    <p class="kicker reveal">TOOLS VISIBLE IN THE PIPELINE</p><h2 class="reveal">流程中真正调用的工具与职责</h2>
+    <div class="lanes reveal">
+      <article class="lane"><h3>本地数据与证据层</h3><ul><li><b>GcdCsvImporter / gcd_metrics</b>：编码、列识别、循环配对、指标计算与异常审计。</li><li><b>PyMuPDF</b>：本地 PDF 逐页文本与证据片段提取。</li><li><b>SQLite</b>：课题、来源、运行、知识、缓存与审核历史存储。</li><li><b>SHA-256</b>：关联原始文件与本轮输出。</li></ul></article>
+      <article class="lane"><h3>文献与大模型层</h3><ul><li><b>Crossref / OpenAlex</b>：可追溯题录和摘要线索。</li><li><b>Codex Web Search</b>：围绕材料体系、指标和研究问题检索学术来源。</li><li><b>Codex app-server</b>：提炼文献知识、解释特征、输出反证与实验设计。</li><li><b>输入清单</b>：记录模型输入字段，明确不传递原始行或点。</li></ul></article>
+      <article class="lane"><h3>可视化与交付层</h3><ul><li><b>Origin 2026</b>：生成正式曲线图和可编辑 .opju 工程。</li><li><b>HTML 报告生成器</b>：组织五章科研叙事及图片。</li><li><b>manifest.json</b>：列出本轮产物、状态和关联关系。</li><li><b>GUI</b>：一处填表、一键串联、实时显示阶段进度。</li></ul></article>
+    </div>
+  </div><footer class="slide-footer"><span>工具链透明化</span><span>每个工具有明确权限边界</span></footer></section>
+
+  <section class="slide" id="s6" aria-label="数据分析"><div class="tab cyan">05 数据先行</div><div class="slide-content">
+    <p class="kicker reveal">DETERMINISTIC ANALYSIS BEFORE AI</p><h2 class="reveal">程序先把原始充放电曲线变成可解释的特征</h2>
+    <div class="metric-grid reveal">
+      <article class="metric"><small>完整循环</small><b>配对</b><small>识别容量重置与充放电段，剔除不完整循环。</small></article>
+      <article class="metric"><small>放电表现</small><b>Q<sub>d</sub></b><small>放电比容量与最高值、首末循环、变化趋势。</small></article>
+      <article class="metric"><small>电压行为</small><b>V̄ / ΔV</b><small>容量加权平均放电电压、平均充电电压与极化。</small></article>
+      <article class="metric"><small>可逆性</small><b>CE / Ret.</b><small>库仑效率与相对首个完整循环的容量保持率。</small></article>
+    </div>
+    <div class="two-col reveal" style="margin-top:clamp(.8rem,2vh,1.5rem)">
+      <div class="guard"><h3>模型接收什么</h3><p>来源哈希、指标摘要、完整循环特征、候选段特征、质量标志和研究者登记条件。</p><span class="chip">有限长度</span><span class="chip">带单位</span><span class="chip">可审计</span></div>
+      <div class="guard"><h3>模型不接收什么</h3><p>原始 CSV 行、逐点电压-时间序列、完整 PDF 文件，以及没有来源标注的结论。</p><span class="chip rust">point_level_input_sent = false</span><span class="chip rust">row_level_input_sent = false</span></div>
+    </div>
+  </div><footer class="slide-footer"><span>数据主权在本地</span><span>确定性指标是模型判断的事实基础</span></footer></section>
+
+  <section class="slide dark" id="s7" aria-label="人工把控"><div class="tab gold">06 人工把控</div><div class="slide-content">
+    <p class="kicker reveal">RESEARCHER REMAINS THE DECISION MAKER</p><h2 class="reveal">人工在哪里把控？为什么不能省略？</h2>
+    <div class="two-col reveal">
+      <article class="guard"><h3>实验开始前：定义事实边界</h3><ul><li>确认材料身份、课题关键词和实验条件。</li><li>填写活性物质质量，明确容量的归一化基础。</li><li>选择是否提供本地 PDF、是否允许 Codex 接收最小证据片段。</li></ul><p><b>作用：</b>避免模型从不完整输入中猜测材料、质量口径或测试条件。</p></article>
+      <article class="guard"><h3>运行后：审查科学适用范围</h3><ul><li>核验 Origin 图是否符合仪器数据与作图规范。</li><li>检查文献来源、原文条件与体系是否确实可比。</li><li>决定哪些建议进入下一轮实验，哪些需要先补充表征。</li></ul><p><b>作用：</b>防止候选文献、单一指标或模型解释被误写为已证实结论。</p></article>
+    </div>
+    <p class="callout dark-callout reveal"><b>责任分配：</b>程序负责算对，Codex 负责提出可检验的解释，研究者负责确认条件、证据强度与科学结论。</p>
+  </div><footer class="slide-footer"><span>人机协同，不是人机替代</span><span>研究者保留最终判断权</span></footer></section>
+
+  <section class="slide" id="s8" aria-label="大模型判断"><div class="tab">07 Codex 判断</div><div class="slide-content">
+    <p class="kicker reveal">WHERE THE MODEL ACTUALLY REASONS</p><h2 class="reveal">Codex 真正做判断的地方</h2>
+    <div class="grid reveal">
+      <article class="card"><span class="number">A</span><h3>把实验问题变成检索问题</h3><p>结合课题、材料体系、关键词、实验条件和已出现的性能指标，规划学术检索主题与优先来源。</p></article>
+      <article class="card"><span class="number">B</span><h3>从证据中学习</h3><p>将本地 PDF 页码片段和联网来源压缩为“研究问题—测试—发现—可借鉴之处”，同时保留证据边界。</p></article>
+      <article class="card"><span class="number">C</span><h3>解释数据的竞争假设</h3><p>基于特征包和文献情境，提出性能信号的支持证据、反对证据、不能判断项和下一步判别实验。</p></article>
+      <article class="card"><span class="number">D</span><h3>形成完整课题建议</h3><p>输出对照组、样品状态、测试方案、表征方法、单一变量以及何种结果支持或否定假设。</p></article>
+    </div>
+    <p class="callout reveal"><b>Codex 不做的判断：</b>不从原始曲线计算容量；不把来源不足的网页信息当作结论；不在条件不匹配时给出“领先/落后”的综合性能裁定。</p>
+  </div><footer class="slide-footer"><span>模型的价值是解释与实验设计</span><span>不是替代仪器数据处理</span></footer></section>
+
+  <section class="slide" id="s9" aria-label="实例结论"><div class="tab cyan">08 示例结论</div><div class="slide-content">
+    <p class="kicker reveal">A REAL RUN, WITH EVIDENCE BOUNDARIES</p><h2 class="reveal">当前 P₂O₅–LPSC 示例运行：工具得到了什么</h2>
+    <div class="metric-grid reveal">
+      <article class="metric"><small>完整循环数</small><b>39</b><small>原始文件 247,101 行，完成循环配对后得到。</small></article>
+      <article class="metric"><small>首末放电比容量</small><b>1107.8 → 1084.7</b><small>mAh g⁻¹，报告的容量保持率为 97.91%。</small></article>
+      <article class="metric"><small>首圈平均放电电压</small><b>0.4551 V</b><small>按容量增量加权计算，不是模型估计。</small></article>
+      <article class="metric"><small>数据质量信号</small><b>需复核</b><small>检测到负电压行与相邻时间重复/反转，应回看仪器导出设置。</small></article>
+    </div>
+    <div class="two-col reveal" style="margin-top:clamp(.8rem,2vh,1.4rem)">
+      <div class="guard"><h3>理论量的正确表达</h3><p>基于研究者确认反应式 <b>P₂O₅ + 16Li → 5Li₂O + 2Li₃P</b>，理论活性物质容量约为 <b>3021.1 mAh g⁻¹</b>。以实测 0.4551 V 投影，约为 <b>1374.9 Wh kg⁻¹</b>。</p></div>
+      <div class="guard"><h3>这不是哪一种结论</h3><p>该值只是“活性物质理论容量 × 实验平均电压”的投影，<b>不等同于复合正极、全电池或电池包能量密度</b>；不同文献条件下也不能直接判定综合性能优劣。</p></div>
+    </div>
+  </div><footer class="slide-footer"><span>实例数字来自确定性分析</span><span>模型据此提出可检验解释</span></footer></section>
+
+  <section class="slide dark" id="s10" aria-label="产物和价值"><div class="tab gold">09 产物 / 价值</div><div class="slide-content">
+    <p class="kicker reveal">DELIVERABLES THAT CHANGE THE NEXT EXPERIMENT</p><h2 class="reveal">得到哪些产物？对实验有真实指导作用吗？</h2>
+    <div class="grid reveal">
+      <article class="card"><h3>规范化数据结论</h3><p>分析文件记录容量、电压、极化、可逆性、趋势和异常，让“看曲线”变成定量问题。</p><p><span class="chip">analysis.json</span></p></article>
+      <article class="card"><h3>正式图片与工程</h3><p>Origin PNG 用于报告、论文或组会；.opju 可以被研究者继续编辑、核验、复画。</p><p><span class="chip">figures/</span><span class="chip">origin/*.opju</span></p></article>
+      <article class="card"><h3>受控文献知识</h3><p>将相关论文的测试、问题、发现、借鉴和来源链接组织为少量可读知识，而非候选堆栈。</p><p><span class="chip">literature_review.json</span></p></article>
+      <article class="card"><h3>下一轮实验路线</h3><p>Codex 与规则层共同给出对照、单一变量、表征和判据，直接服务于“下一次做什么、为什么做”。</p><p><span class="chip rust">guidance.json</span></p></article>
+      <article class="card"><h3>中文科研报告</h3><p>把已核验事实、阶段定位、文献学习、证据边界和后续路线整合到一份可分享的 HTML 报告。</p><p><span class="chip gold">research_decision_report.html</span></p></article>
+      <article class="card"><h3>可审计运行档案</h3><p>通过哈希、输入清单、来源与 manifest 关联本轮结果。它支持复核，而不是要求研究者相信黑箱。</p><p><span class="chip">manifest.json</span></p></article>
+    </div>
+    <p class="callout dark-callout reveal"><b>真实指导作用：</b>工具不承诺自动证明机理；它把“是否稳定、哪里异常、需要什么对照、哪种结果能区分解释”变成下一轮实验的明确设计。</p>
+  </div><footer class="slide-footer"><span>产物不是终点</span><span>产物是下一轮实验的输入</span></footer></section>
+
+  <section class="slide" id="s11" aria-label="知识积累与结语"><div class="tab">10 知识积累</div><div class="slide-content">
+    <p class="kicker reveal">KNOWLEDGE ACCUMULATION, NOT MEMORY ILLUSION</p><div class="conclusion reveal">
+      <div><h2>能积累知识，并让后续模型在可追溯知识上继续工作。</h2><p class="big-statement">每一次运行，都把数据、来源、<span>证据片段</span>、模型学习结果和研究缺口留在本地知识库。</p><p class="lead">但“存入知识库”不等于“自动成为真理”。来源与条件仍须可追溯，条件不匹配的文献仍只能作为背景或待验证线索。</p></div>
+      <div class="timeline"><div><b>项目层：</b>课题信息、材料体系、关键词与实验条件可恢复。</div><div><b>来源层：</b>PDF 文件哈希、页码片段、DOI/URL 和候选状态可追踪。</div><div><b>运行层：</b>原始数据哈希、特征包、Origin 产物和报告彼此关联。</div><div><b>学习层：</b>Codex 精炼的“问题—测试—发现—借鉴”可在后续相同主题中复用。</div></div>
+    </div>
+    <div class="rule reveal"></div><p class="callout reveal"><b>一句话总结：</b>ElectrochemHarness v2 将大模型放在它最擅长的“基于受控证据提出研究判断”位置，同时把数值计算、文件留存、图形产出和最终科学把关留在可验证的本地流程与研究者手中。</p>
+  </div><footer class="slide-footer"><span>ElectrochemHarness v2</span><span>从数据处理走向研究决策</span></footer></section>
+</main>
+<script>
+class PresentationController {
+  constructor() {
+    this.slides = [...document.querySelectorAll('.slide')];
+    this.counter = document.querySelector('.counter');
+    this.nav = document.querySelector('.nav-dots');
+    this.index = 0; this.locked = false;
+    this.slides.forEach((slide, i) => { const b = document.createElement('button'); b.type='button'; b.setAttribute('aria-label', `转到第 ${i+1} 页`); b.addEventListener('click', () => this.go(i)); this.nav.appendChild(b); });
+    this.dots = [...this.nav.querySelectorAll('button')];
+    this.observer = new IntersectionObserver(entries => entries.forEach(entry => { if (entry.isIntersecting) { this.index=this.slides.indexOf(entry.target); entry.target.classList.add('in-view'); this.render(); } }), {threshold:.62});
+    this.slides.forEach(s => this.observer.observe(s));
+    document.addEventListener('keydown', e => { if(['ArrowDown','ArrowRight','PageDown',' '].includes(e.key)){e.preventDefault();this.go(this.index+1)} if(['ArrowUp','ArrowLeft','PageUp'].includes(e.key)){e.preventDefault();this.go(this.index-1)} if(e.key==='Home'){e.preventDefault();this.go(0)} if(e.key==='End'){e.preventDefault();this.go(this.slides.length-1)} });
+    let y=0; document.addEventListener('touchstart', e=>y=e.changedTouches[0].clientY,{passive:true}); document.addEventListener('touchend', e=>{const d=e.changedTouches[0].clientY-y;if(Math.abs(d)>48)this.go(this.index+(d<0?1:-1))},{passive:true});
+    this.render();
+  }
+  go(next) { const target=Math.max(0,Math.min(this.slides.length-1,next)); this.slides[target].scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'}); }
+  render() { this.counter.textContent=`${String(this.index+1).padStart(2,'0')} / ${String(this.slides.length).padStart(2,'0')}`; this.dots.forEach((d,i)=>d.classList.toggle('active',i===this.index)); }
+}
+new PresentationController();
+</script>
+</body>
+</html>

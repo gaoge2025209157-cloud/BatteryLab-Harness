@@ -1,0 +1,12 @@
+.venv/
+.pip-tmp/
+.pip-cache/
+.codex-web/
+scripts/.origin-runtime/
+__pycache__/
+*.py[cod]
+outputs/
+*.sqlite3
+*.opju
+.env
+config.json
