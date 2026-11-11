@@ -13,7 +13,7 @@ from .models import KnowledgeClaim, ReviewEvent, SourceSpan
 
 
 class ResearchStore:
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(self, path: Path | str):
         self.path = Path(path)
@@ -96,6 +96,21 @@ class ResearchStore:
                     fingerprint TEXT PRIMARY KEY,
                     payload TEXT NOT NULL,
                     updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS research_states (
+                    project_id TEXT PRIMARY KEY REFERENCES projects(project_id),
+                    payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS context_records (
+                    context_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id),
+                    run_id TEXT REFERENCES experiment_runs(run_id),
+                    stage TEXT NOT NULL,
+                    context_hash TEXT NOT NULL,
+                    input_tokens_estimated INTEGER NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
                 );
                 """
             )
@@ -308,6 +323,124 @@ class ResearchStore:
         with self._connect() as connection:
             row = connection.execute("SELECT payload FROM search_knowledge_cache WHERE fingerprint=?", (fingerprint,)).fetchone()
         return json.loads(row["payload"]) if row else None
+
+    @staticmethod
+    def _empty_research_state(project_id: str) -> dict:
+        return {
+            "schema_version": "1.0",
+            "project_id": project_id,
+            "confirmed_decisions": [],
+            "user_corrections": [],
+            "recent_findings": [],
+            "hypotheses": [],
+            "rejected_hypotheses": [],
+            "open_questions": [],
+            "next_intent": "",
+            "last_run_id": None,
+            "row_version": 0,
+        }
+
+    def get_research_state(self, project_id: str) -> dict:
+        with self._connect() as connection:
+            project = connection.execute("SELECT 1 FROM projects WHERE project_id=?", (project_id,)).fetchone()
+            if project is None:
+                raise KeyError("Project does not exist: {}".format(project_id))
+            row = connection.execute("SELECT payload FROM research_states WHERE project_id=?", (project_id,)).fetchone()
+        if row is None:
+            return self._empty_research_state(project_id)
+        state = self._empty_research_state(project_id)
+        state.update(json.loads(row["payload"]))
+        return state
+
+    def update_research_state(self, project_id: str, **fields) -> dict:
+        """Update explicit research memory without silently inventing user decisions."""
+        allowed = {
+            "confirmed_decisions", "user_corrections", "recent_findings", "hypotheses",
+            "rejected_hypotheses", "open_questions", "next_intent", "last_run_id",
+        }
+        unknown = set(fields) - allowed
+        if unknown:
+            raise ValueError("Unsupported research-state fields: {}".format(", ".join(sorted(unknown))))
+        state = self.get_research_state(project_id)
+        for key, value in fields.items():
+            if key in {"confirmed_decisions", "user_corrections", "recent_findings", "hypotheses", "rejected_hypotheses", "open_questions"}:
+                state[key] = list(value or [])[-40:]
+            elif key == "next_intent":
+                state[key] = str(value or "").strip()[:2000]
+            else:
+                state[key] = value
+        state["row_version"] = int(state.get("row_version", 0)) + 1
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO research_states(project_id, payload, updated_at) VALUES(?,?,?) "
+                "ON CONFLICT(project_id) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at",
+                (project_id, json.dumps(state, ensure_ascii=False, sort_keys=True), now),
+            )
+        return state
+
+    def record_guidance_state(self, project_id: str, run_id: str, guidance: dict) -> dict:
+        """Persist model output as candidate research memory, never as approved fact."""
+        state = self.get_research_state(project_id)
+        hypotheses = list(state.get("hypotheses") or [])
+        for item in guidance.get("hypotheses") or []:
+            if not isinstance(item, dict) or not str(item.get("claim") or "").strip():
+                continue
+            hypotheses.append({
+                "run_id": run_id,
+                "status": "candidate",
+                "claim": str(item.get("claim") or "").strip(),
+                "support": [str(value) for value in item.get("support") or []],
+                "against": [str(value) for value in item.get("against") or []],
+                "falsification_test": str(item.get("test") or "").strip(),
+            })
+        findings = list(state.get("recent_findings") or [])
+        findings.extend({"run_id": run_id, "status": "deterministic_reported", "text": str(value)} for value in guidance.get("data_facts") or [])
+        open_questions = list(dict.fromkeys([
+            *[str(value) for value in state.get("open_questions") or [] if str(value).strip()],
+            *[str(value) for value in guidance.get("cannot_determine") or [] if str(value).strip()],
+        ]))
+        next_experiments = guidance.get("next_experiments") or []
+        next_intent = ""
+        if next_experiments:
+            first = next_experiments[0]
+            next_intent = str(first.get("action") if isinstance(first, dict) else first).strip()
+        return self.update_research_state(
+            project_id,
+            recent_findings=findings[-40:],
+            hypotheses=hypotheses[-40:],
+            open_questions=open_questions[-40:],
+            next_intent=next_intent,
+            last_run_id=run_id,
+        )
+
+    def save_context_record(self, project_id: str, run_id: str | None, stage: str, manifest: dict) -> str:
+        context_id = str(manifest.get("context_id") or "").strip()
+        context_hash = str(manifest.get("context_hash") or "").strip()
+        if not context_id or not context_hash:
+            raise ValueError("Context manifest requires context_id and context_hash.")
+        payload = json.dumps(manifest, ensure_ascii=False, sort_keys=True)
+        created_at = str(manifest.get("created_at") or datetime.now(timezone.utc).isoformat())
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO context_records(context_id, project_id, run_id, stage, context_hash, input_tokens_estimated, payload, created_at) "
+                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(context_id) DO UPDATE SET context_hash=excluded.context_hash, "
+                "input_tokens_estimated=excluded.input_tokens_estimated, payload=excluded.payload, created_at=excluded.created_at",
+                (context_id, project_id, run_id, str(stage), context_hash, int(manifest.get("input_tokens_estimated") or 0), payload, created_at),
+            )
+        return context_id
+
+    def list_context_records(self, project_id: str, run_id: str | None = None) -> list[dict]:
+        with self._connect() as connection:
+            if run_id is None:
+                rows = connection.execute(
+                    "SELECT payload FROM context_records WHERE project_id=? ORDER BY created_at, context_id", (project_id,)
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT payload FROM context_records WHERE project_id=? AND run_id=? ORDER BY created_at, context_id", (project_id, run_id)
+                ).fetchall()
+        return [json.loads(row["payload"]) for row in rows]
 
     @staticmethod
     def _claim_from_row(row: sqlite3.Row) -> KnowledgeClaim:

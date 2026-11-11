@@ -27,7 +27,7 @@ GUIDANCE_OUTPUT_SCHEMA = {
         "cannot_determine": {"type": "array", "items": {"type": "string"}},
         "benchmark_comparisons": {"type": "array", "items": {"type": "object", "properties": {"metric": {"type": "string"}, "observed": {"type": "string"}, "reference": {"type": "string"}, "comparability": {"type": "string"}, "conclusion": {"type": "string"}, "source_urls": {"type": "array", "items": {"type": "string"}}}, "required": ["metric", "observed", "reference", "comparability", "conclusion", "source_urls"], "additionalProperties": False}},
         "theoretical_energy_assessment": {"type": "object", "properties": {"status": {"type": "string"}, "conclusion": {"type": "string"}}, "required": ["status", "conclusion"], "additionalProperties": False},
-        "next_experiments": {"type": "array", "items": {"type": "object", "properties": {"action": {"type": "string"}, "variable": {"type": "string"}, "expected_evidence": {"type": "string"}}, "required": ["action", "variable", "expected_evidence"], "additionalProperties": False}},
+        "next_experiments": {"type": "array", "items": {"type": "object", "properties": {"action": {"type": "string"}, "hypothesis": {"type": "string"}, "purpose": {"type": "string"}, "variable": {"type": "string"}, "controls": {"type": "array", "items": {"type": "string"}}, "expected_evidence": {"type": "string"}, "expected_if_supported": {"type": "string"}, "expected_if_refuted": {"type": "string"}, "requires_confirmation": {"type": "boolean"}}, "required": ["action", "hypothesis", "purpose", "variable", "controls", "expected_evidence", "expected_if_supported", "expected_if_refuted", "requires_confirmation"], "additionalProperties": False}},
     },
     "required": ["assessment", "data_facts", "hypotheses", "cannot_determine", "benchmark_comparisons", "theoretical_energy_assessment", "next_experiments"],
     "additionalProperties": False,
@@ -125,6 +125,19 @@ def _parse_json(text: str) -> dict:
     if not isinstance(payload, dict):
         raise CodexResearchError("Codex response must be a JSON object.")
     return payload
+
+
+def _project_id(project_context: Mapping[str, Any]) -> str:
+    value = project_context.get("project_id")
+    if not value and isinstance(project_context.get("project"), Mapping):
+        value = project_context["project"].get("project_id")
+    if not str(value or "").strip():
+        raise CodexResearchError("Managed context does not identify a project.")
+    return str(value)
+
+
+def _is_managed_context(project_context: Mapping[str, Any]) -> bool:
+    return str(project_context.get("schema_version") or "").startswith("2.") and isinstance(project_context.get("task"), Mapping)
 
 
 def candidate_payload_to_claims(project_id: str, source_id: str, allowed_span_ids: set[str], payload: Mapping[str, Any]) -> tuple[list[KnowledgeClaim], list[str]]:
@@ -227,13 +240,13 @@ class CodexResearchClient:
                 developer_instructions="Use only supplied evidence. Do not access files, network, or run commands.", ephemeral=False,
             )
             message = json.dumps(
-                {"context_type": "local_pdf_evidence", "instruction": prompt, "project_context": dict(project_context), "source_id": source_id, "evidence": evidence},
+                {"context_type": "local_pdf_evidence", "instruction": prompt, "managed_context": dict(project_context), "source_id": source_id, "evidence": evidence},
                 ensure_ascii=False,
             )
             result = thread.run(message)
             if "completed" not in str(result.status).casefold() or result.error or not result.final_response:
                 raise CodexResearchError("Codex candidate extraction failed: {}".format(result.error or result.status))
-            claims, rejected = candidate_payload_to_claims(project_context["project_id"], source_id, {item["span_id"] for item in evidence}, _parse_json(result.final_response))
+            claims, rejected = candidate_payload_to_claims(_project_id(project_context), source_id, {item["span_id"] for item in evidence}, _parse_json(result.final_response))
             return thread.id, claims, rejected
         finally:
             client.close()
@@ -259,10 +272,11 @@ class CodexResearchClient:
         )
         payload = {
             "instruction": prompt,
-            "project_context": dict(project_context),
-            "local_pdf_candidates": candidates,
-            "codex_web_research": bounded_online,
+            "managed_context": dict(project_context),
         }
+        if not _is_managed_context(project_context):
+            payload["local_pdf_candidates"] = candidates
+            payload["codex_web_research"] = bounded_online
         client = self.client_factory(CodexConfig(cwd=self.cwd))
         try:
             thread = client.thread_resume(thread_id, approval_mode=ApprovalMode.deny_all, sandbox=Sandbox.read_only) if thread_id else client.thread_start(
@@ -279,7 +293,7 @@ class CodexResearchClient:
                 raise CodexResearchError("Codex literature synthesis failed: {}".format(result.error or result.status))
             parsed = _parse_json(result.final_response)
             allowed_urls = {str(row.get("url")) for row in online.get("sources") or [] if isinstance(row, Mapping) and row.get("url")}
-            claims, rejected = curated_payload_to_claims(project_context["project_id"], candidate_claims, parsed, allowed_source_urls=allowed_urls)
+            claims, rejected = curated_payload_to_claims(_project_id(project_context), candidate_claims, parsed, allowed_source_urls=allowed_urls)
             return thread.id, parsed, claims, rejected
         finally:
             client.close()
@@ -293,21 +307,25 @@ class CodexResearchClient:
             "Data facts may only restate deterministic analysis supplied here. "
             "Use approved literature claims only as formal literature evidence; web-search candidates may support explicitly labelled context-only comparisons but never formal superiority claims. "
             "Discuss deterministic theoretical-energy calculations only with their active-material basis and reaction-model limitations. "
-            "Separate observations, hypotheses, and limitations. When project_context includes a positive active_material_mass_mg, treat it as the researcher-recorded normalization basis for this run; do not repeat a generic request to verify the mass basis. "
+            "Separate observations, hypotheses, and limitations. When the managed context records a positive active_material_mass_mg, treat it as the researcher-recorded normalization basis for this run; do not repeat a generic request to verify the mass basis. "
             "Do not claim causation or superiority without approved comparable evidence. "
             "Give constructive project-level experimental guidance rather than generic suggestions: cover controls, sample states, electrochemical protocol, interface/structure characterization, and an evidence-based decision criterion when the supplied evidence supports it. "
+            "Use research_memory to continue earlier hypotheses and user decisions; do not revive rejected hypotheses unless new evidence directly justifies reconsideration. "
             "All natural-language fields must be written in simplified Chinese. "
-            "Each hypothesis must include support, against, and a falsification test. Each experiment must change one variable and state expected evidence."
+            "Each hypothesis must include support, against, and a falsification test. Each experiment must change one variable and state its hypothesis, purpose, controls, expected evidence, expected outcomes if supported or refuted, and whether researcher confirmation is required."
         )
         payload = {
             "instruction": prompt,
-            "project_context": dict(project_context),
-            "deterministic_analysis": dict(deterministic_analysis),
-            "origin_status": dict(origin_status),
-            "approved_literature_claims": approved,
-            "online_research_candidates": dict(online_research or {}),
-            "deterministic_theoretical_energy": dict(theoretical_energy or {}),
+            "managed_context": dict(project_context),
         }
+        if not _is_managed_context(project_context):
+            payload.update({
+                "deterministic_analysis": dict(deterministic_analysis),
+                "origin_status": dict(origin_status),
+                "approved_literature_claims": approved,
+                "online_research_candidates": dict(online_research or {}),
+                "deterministic_theoretical_energy": dict(theoretical_energy or {}),
+            })
         client = self.client_factory(CodexConfig(cwd=self.cwd))
         try:
             thread = client.thread_resume(thread_id, approval_mode=ApprovalMode.deny_all, sandbox=Sandbox.read_only) if thread_id else client.thread_start(
@@ -332,9 +350,8 @@ class CodexResearchClient:
         web_cwd = Path(self.cwd) / ".codex-web"
         web_cwd.mkdir(parents=True, exist_ok=True)
         task = {
-            "project_context": dict(project_context),
+            "managed_context" if _is_managed_context(project_context) else "project_context": dict(project_context),
             "benchmark_topics": benchmark_topics,
-            "academic_api_candidates": api_records[:30],
             "required_output": {
                 "sources": "HTTPS sources with title, URL, source type, and specific claims",
                 "priority_sources": "at most 8 most relevant primary or authoritative sources, each with why_relevant",
@@ -347,6 +364,8 @@ class CodexResearchClient:
                 "theoretical_model": "formula, electron transfer, average voltage, source URLs, limitations, or null",
             },
         }
+        if not _is_managed_context(project_context):
+            task["academic_api_candidates"] = api_records[:30]
         developer = (
             "Act as the project's senior electrochemistry research partner. Start from the supplied project brief and bounded deterministic data features, then use live web search to investigate the exact scientific questions exposed by this dataset. "
             "For Chinese discovery, search X-MOL and follow through to the cited academic paper or journal page. For English discovery, search Google Scholar and follow through to the peer-reviewed journal, DOI, publisher, or repository page. "
