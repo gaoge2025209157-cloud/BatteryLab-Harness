@@ -175,6 +175,20 @@ cd D:\AI\Harness-v2
 }
 ```
 
+#### 统一上下文管理
+
+v2 在每个 Codex 阶段前通过 `ContextBuilder` 组装受控上下文。上下文包括本轮任务、实验条件、确定性数据特征、分级知识、候选题录、上一轮研究状态、权限与模型身份，并遵循以下规则：
+
+- `approved` 知识可以作为正式文献依据；
+- `candidate` 知识和联网结果只能用于提出假设与判别实验；
+- `rejected` 知识和明确不匹配当前实验条件的证据不会进入模型；
+- 原始逐行 CSV、逐点时间序列、密钥、Cookie 与本机绝对路径不会进入模型；
+- 输入超过 Token 预算时优先排除低相关候选，不截断任务、实验条件和确定性事实；
+- 每次调用保存上下文包、来源清单、排除原因、Token 估算与上下文哈希；
+- 数据、实验条件、知识状态、研究记忆或模型身份变化时，上下文哈希随之变化。
+
+Codex 生成的假设和下一轮实验建议会以候选研究状态保存。研究人员的确认、纠正和被排除假设由本地课题库保留，供下一轮数据分析继续使用；模型不能自行批准科学知识。
+
 ### 6.2 理论能量的正确口径
 
 程序采用 `mAh g⁻¹ × V = Wh kg⁻¹` 计算活性物质质量口径的理论或投影比能量。若使用实验平均放电电压，该结果必须标注为“理论容量 × 实验平均电压”的投影。
@@ -197,8 +211,13 @@ outputs/research_cockpit/<project_id>/runs/<run_id>/
 ├─ benchmark_research.json          # 题录线索、Codex 联网研究和理论计算
 ├─ literature_review.json           # 文献学习结果、来源与研究缺口
 ├─ codex_activity.json              # Codex 阶段、检索主题、来源和判断摘要
-├─ codex_input_manifest.json        # 模型输入字段与原始数据隔离证据
-├─ guidance.json                    # Codex 结构化课题评估与实验建议
+├─ codex_input_manifest.json        # 模型输入边界及受控上下文入口
+├─ contexts/
+│  ├─ online_research.bundle.json   # 联网研究阶段实际使用的上下文
+│  ├─ online_research.manifest.json # 纳入/排除来源、Token和哈希
+│  ├─ literature_synthesis.*.json   # 文献精选阶段的上下文与清单
+│  └─ codex_assessment.*.json       # 课题评估阶段的上下文与清单
+├─ guidance.json                    # Codex结构化课题评估、上下文依据与实验建议
 ├─ figures/                         # Origin 正式导出图片
 ├─ origin/                          # Origin 工程与作图状态
 ├─ manifest.json                    # 本轮产物和状态清单
@@ -221,7 +240,7 @@ $env:PYTHONPATH = "$PWD\src"
 
 > 当前 Windows 环境请使用 `discover -s tests`。不要使用 `python -m unittest tests.test_...`，该调用方式在本环境可能将 `tests` 解析错误。
 
-自动化测试覆盖 CSV 导入、GCD 指标、Codex 输入边界、PDF 提取、文献检索、知识提炼、Origin 适配、报告生成、理论能量、缓存与一键工作流。
+自动化测试覆盖 CSV 导入、GCD 指标、Codex 输入边界、统一上下文构建、知识状态筛选、Token预算、隐私脱敏、跨轮研究记忆、PDF 提取、文献检索、知识提炼、Origin 适配、报告生成、理论能量、缓存与一键工作流。
 
 ---
 
