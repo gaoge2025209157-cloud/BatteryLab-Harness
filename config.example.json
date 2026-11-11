@@ -5,6 +5,7 @@
     "reserved_output_tokens": 3000,
     "max_approved_claims": 10,
     "max_candidate_claims": 6,
-    "max_metadata_records": 12
+    "max_metadata_records": 12,
+    "search_cache_ttl_seconds": 86400
   }
 }

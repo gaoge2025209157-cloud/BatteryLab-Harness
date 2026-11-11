@@ -50,6 +50,7 @@ class ContextBuilderV2Tests(unittest.TestCase):
         builder = ContextBuilder()
         context = _project_context()
         context["experiment_conditions"]["api_key"] = "do-not-send"
+        context["experiment_conditions"]["apiToken"] = "also-do-not-send"
         context["experiment_conditions"]["data_path"] = "D:\\private\\sample.csv"
         result = builder.build(
             stage="codex_assessment",
@@ -60,6 +61,7 @@ class ContextBuilderV2Tests(unittest.TestCase):
         rendered = json.dumps(result.bundle, ensure_ascii=False)
         self.assertNotIn("raw-row", rendered)
         self.assertNotIn("do-not-send", rendered)
+        self.assertNotIn("also-do-not-send", rendered)
         self.assertNotIn("private-cookie", rendered)
         self.assertNotIn("D:\\\\private", rendered)
         self.assertIn("sample.csv", rendered)
@@ -114,6 +116,24 @@ class ContextBuilderV2Tests(unittest.TestCase):
         self.assertEqual(packet["evidence_status"], "candidate_web_research")
         self.assertIn("候选证据必须", "；".join(result.bundle["active_constraints"]))
 
+    def test_online_sources_preserve_validator_claims_and_evidence_level(self):
+        result = ContextBuilder().build(
+            stage="codex_assessment",
+            task=_task(),
+            project_context=_project_context(),
+            online_research={
+                "sources": [{
+                    "title": "Paper",
+                    "url": "https://example.org/paper",
+                    "claims": ["校验器保留的声明"],
+                    "evidence_level": "abstract_only",
+                }],
+            },
+        )
+        source = result.bundle["candidate_online_research"]["sources"][0]
+        self.assertEqual(source["claims"], ["校验器保留的声明"])
+        self.assertEqual(source["evidence_level"], "abstract_only")
+
     def test_protected_context_over_budget_fails_instead_of_truncating(self):
         task = _task()
         task["goal"] = "容量" * 10000
@@ -145,6 +165,7 @@ class ResearchStateTests(unittest.TestCase):
             })
             self.assertEqual(updated["confirmed_decisions"], ["先复测平行电池"])
             self.assertEqual(updated["hypotheses"][-1]["status"], "candidate")
+            self.assertEqual(updated["recent_findings"][-1]["status"], "model_restatement_candidate")
             self.assertEqual(updated["next_intent"], "复测平行电池")
             self.assertEqual(store.get_research_state(project_id)["last_run_id"], "run-1")
 
@@ -196,6 +217,24 @@ class WorkflowContextIntegrationTests(unittest.TestCase):
             self.assertEqual(workflow.store.get_research_state(project_id)["last_run_id"], run.run_id)
             report = workflow.build_report(project_id, run.run_id)
             self.assertIn("本轮Codex上下文与依据", report.read_text(encoding="utf-8"))
+
+    def test_rebuilt_stage_keeps_immutable_context_versions_and_database_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workflow = ResearchWorkflow(root / "research.sqlite3", root / "outputs")
+            project_id = workflow.create_project("Test", "P2O5", ["P2O5"])
+            first = workflow._build_managed_context(project_id, "online_research")
+            second = workflow._build_managed_context(project_id, "online_research")
+
+            self.assertEqual(first.context_hash, second.context_hash)
+            self.assertNotEqual(first.manifest["record_id"], second.manifest["record_id"])
+            records = workflow.store.list_context_records(project_id)
+            self.assertEqual(len(records), 2)
+            versions = root / "outputs" / project_id / "contexts" / "versions"
+            self.assertTrue((versions / (first.manifest["record_id"] + ".bundle.json")).is_file())
+            self.assertTrue((versions / (second.manifest["record_id"] + ".manifest.json")).is_file())
+            self.assertEqual(first.bundle["model_identity"]["model"], "sdk-default")
+            self.assertIn("sdk_version", first.bundle["model_identity"])
 
 
 if __name__ == "__main__":

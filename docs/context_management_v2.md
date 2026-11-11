@@ -28,8 +28,11 @@ ContextBuilder
     ↓
 contexts/<stage>.bundle.json
 contexts/<stage>.manifest.json
+contexts/versions/<record_id>.*.json
     ↓
-Codex（只读、deny-all）
+Codex（只读、deny-all、新临时线程）
+    ↓
+codex_invocations/<invocation_id>.json
     ↓
 guidance.json + 研究状态更新 + HTML 报告
 ```
@@ -127,15 +130,20 @@ Codex 输出只以 `candidate` 状态进入研究记忆，不能自动成为已�
 
 ```text
 contexts/
-├─ online_research.bundle.json
-├─ online_research.manifest.json
-├─ literature_synthesis.bundle.json
-├─ literature_synthesis.manifest.json
-├─ codex_assessment.bundle.json
-└─ codex_assessment.manifest.json
+├─ <stage>.bundle.json
+├─ <stage>.manifest.json
+└─ versions/
+   ├─ <record_id>.bundle.json
+   └─ <record_id>.manifest.json
+codex_invocations/
+└─ <invocation_id>.json
 ```
 
-`bundle.json` 是 Codex 实际接收的受控上下文。
+阶段根目录文件是最近版本的兼容入口。`versions/` 保存不可覆盖的每次构建。
+
+`bundle.json` 是 ContextBuilder 生成的受控上下文。完整模型请求以调用记录中的 `local_request` 为准。
+
+调用记录还保存开发规则、输出格式、模型与 SDK 身份、所选 PDF 片段及其哈希、请求哈希、响应哈希和成败状态。调用始终启动新临时线程；传入的旧线程编号不会恢复，因此没有未纳入哈希的历史消息。
 
 `manifest.json` 记录：
 
@@ -162,7 +170,7 @@ contexts/
 → 支持、削弱或排除候选解释
 ```
 
-当前模块已经保存 Codex 产生的候选假设、不可判断项和下一轮实验。研究人员确认、纠正和拒绝假设可通过 `ResearchStore.update_research_state()` 写入；GUI 的人工编辑入口属于后续界面工作，不由模型自动执行。
+当前模块会保存 Codex 产生的候选假设、不可判断项和下一轮实验。GUI 的**“编辑研究状态”**入口允许研究人员保存确认、纠正、拒绝假设、开放问题和下一轮目标。GUI 的**“审核候选知识”**入口用于逐条批准或驳回候选，并要求记录审核人和理由。模型不能执行这些人工决定。
 
 ## 7. 下一轮实验输出
 
@@ -200,3 +208,19 @@ contexts/
 - 用户决定和候选假设跨轮保存；
 - Codex 课题评估通过统一上下文运行；
 - 上下文包、清单、研究状态和报告审计落盘。
+
+## 10. 多方法和缓存失效
+
+统一特征包支持 GCD、CV、EIS 和 GITT。`normalized_points`、`points`、`rows`、`series` 及同类逐点字段不会进入模型。非 GCD 方法只发送聚合描述量和质量标志。
+
+联网研究缓存同时绑定：
+
+- 检索主题；
+- 确定性研究上下文；
+- 知识状态与研究记忆；
+- 提示版本；
+- 搜索和 Codex 适配器版本；
+- 模型与 SDK 身份；
+- 过期时间。
+
+任一指纹变化时缓存标为 `incompatible`；超过期限时标为 `stale`。两种状态都会重新研究。

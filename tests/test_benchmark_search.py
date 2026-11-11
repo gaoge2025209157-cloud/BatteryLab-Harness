@@ -25,6 +25,14 @@ class BenchmarkSearchTests(unittest.TestCase):
         self.assertIn("interfacial resistance ohm", joined)
         self.assertNotIn("industry standard", joined)
 
+    def test_generic_topics_do_not_inject_material_names(self):
+        topics = build_benchmark_topics("sodium ion layered oxide", {"gcd_summary": {}})
+        joined = " ".join(topics)
+        self.assertIn("sodium ion layered oxide", joined)
+        self.assertNotIn("P2O5", joined)
+        self.assertNotIn("LPSC", joined)
+        self.assertNotIn("solid-state battery cathode", joined)
+
     def test_openalex_abstract_is_marked_abstract_only(self):
         crossref = lambda _url: {"message": {"items": []}}
         openalex = lambda _url: {"results": [{

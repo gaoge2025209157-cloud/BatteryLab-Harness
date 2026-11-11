@@ -4,57 +4,171 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from electrochem_harness_v2.comparison import compare_metric
+from electrochem_harness_v2.models import KnowledgeClaim
 from electrochem_harness_v2.report import write_report
 
 
+CONDITIONS = {
+    "cathode": "NCM88",
+    "electrolyte": "LiCl",
+    "temperature_C": 60,
+    "normalization_basis": "cathode active mass",
+}
+
+
+def approved_capacity_claim(unit: str = "mAh/g", conditions=None) -> KnowledgeClaim:
+    return KnowledgeClaim.new(
+        project_id="project-1",
+        source_id="source-1",
+        claim_type="performance",
+        text="Approved reference capacity",
+        metric_id="latest_complete_discharge_capacity_mAh_g",
+        value=100.0,
+        unit=unit,
+        conditions=CONDITIONS if conditions is None else conditions,
+        evidence_span_ids=["span-1"],
+        status="approved",
+    )
+
+
 class ReportConclusionTests(unittest.TestCase):
-    def test_reports_user_supplied_li_s_capacity_potential_and_hides_unverified_rows(self):
+    def test_approved_matching_claim_is_compared_from_analysis(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "report.html"
             write_report(
                 path,
-                {"status": "REPORT_READY_WITH_NO_COMPARABLE_PAPERS"},
+                {"project_name": "Generic cathode", "material_system": "NCM88|LiCl", "conditions": CONDITIONS},
+                [approved_capacity_claim()],
                 [],
-                [],
-                guidance={
-                    "assessment": "The first complete discharge capacity is higher than the user-specified Li-S theoretical reference.",
-                    "data_facts": ["First complete discharge capacity: 3627.9 mAh/g."],
-                    "cannot_determine": ["Full-cell energy density."],
-                    "hypotheses": [],
-                    "benchmark_comparisons": [{"metric": "capacity", "observed": "3627.9 mAh/g", "reference": "1675 mAh/g", "comparability": "context_only", "conclusion": "Potential by active-material capacity", "evidence_status": "user_provided", "source_urls": []}, {"metric": "bad", "observed": "unknown", "reference": "unknown", "comparability": "candidate", "conclusion": "Do not show", "evidence_status": "candidate", "source_urls": []}],
-                    "theoretical_energy_assessment": {"conclusion": "Candidate only"},
-                    "next_experiments": [],
-                },
-                analysis={"gcd_summary": {"first_complete_discharge_capacity_mAh_g": 3627.9}},
-                benchmark={"codex_web_research": {"mainstream_systems": [{"system": "NMC", "specific_capacity_mAh_g": None, "source_urls": ["https://example.org"]}], "standards": [{"name": "Candidate", "issuer": "X", "scope": "Y", "url": "https://example.org"}]}},
+                analysis={"gcd_summary": {"latest_complete_discharge_capacity_mAh_g": 110.0}},
             )
             html = path.read_text(encoding="utf-8")
-        self.assertIn("1675 mAh g⁻¹", html)
-        self.assertIn("Li–S", html)
-        self.assertNotIn("Do not show", html)
-        self.assertNotIn("标准/规范", html)
-        self.assertIn("网页候选的性能数值不直接写入本课题结论", html)
+        self.assertIn("Approved reference capacity", html)
+        self.assertIn("高于已批准参考值", html)
+        self.assertIn("110.000 mAh/g", html)
+        self.assertIn("100.000 mAh/g", html)
+
+    def test_ambiguous_capacity_metric_is_not_auto_compared(self):
+        claim = KnowledgeClaim.new(
+            project_id="project-1",
+            source_id="source-1",
+            claim_type="performance",
+            text="Ambiguous capacity basis",
+            metric_id="discharge_specific_capacity_mAh_g",
+            value=100.0,
+            unit="mAh/g",
+            conditions=CONDITIONS,
+            status="approved",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.html"
+            write_report(
+                path,
+                {"conditions": CONDITIONS},
+                [claim],
+                [],
+                analysis={"gcd_summary": {"latest_complete_discharge_capacity_mAh_g": 110.0}},
+            )
+            html = path.read_text(encoding="utf-8")
+        self.assertIn("Ambiguous capacity basis", html)
+        self.assertNotIn("高于已批准参考值", html)
+
+    def test_supplied_deterministic_comparison_is_used(self):
+        claim = approved_capacity_claim()
+        outcome = compare_metric(
+            observed_value=90.0,
+            observed_unit="mAh/g",
+            observed_conditions=CONDITIONS,
+            claim=claim,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.html"
+            write_report(path, {"conditions": CONDITIONS}, [claim], [outcome])
+            html = path.read_text(encoding="utf-8")
+        self.assertIn("低于已批准参考值", html)
+        self.assertIn("90.000 mAh/g", html)
+
+    def test_mismatched_conditions_and_candidate_values_do_not_create_formal_judgment(self):
+        claim = approved_capacity_claim(conditions={**CONDITIONS, "temperature_C": 25})
+        candidate = KnowledgeClaim.new(
+            project_id="project-1",
+            source_id="candidate-source",
+            claim_type="performance",
+            text="Unreviewed candidate value",
+            metric_id="discharge_specific_capacity_mAh_g",
+            value=50.0,
+            unit="mAh/g",
+            conditions=CONDITIONS,
+            status="candidate",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.html"
+            write_report(
+                path,
+                {"conditions": CONDITIONS},
+                [claim, candidate],
+                [],
+                guidance={"assessment": "Candidate result is higher than the web reference."},
+                analysis={"gcd_summary": {"latest_complete_discharge_capacity_mAh_g": 110.0}},
+                benchmark={"codex_web_research": {"mainstream_systems": [{
+                    "system": "Web candidate",
+                    "specific_capacity_mAh_g": 50.0,
+                    "source_urls": ["https://example.org/paper"],
+                }]}},
+            )
+            html = path.read_text(encoding="utf-8")
+        self.assertNotIn("Unreviewed candidate value", html)
+        self.assertNotIn("Candidate result is higher", html)
+        self.assertNotIn("高于已批准参考值", html)
+        self.assertNotIn("低于已批准参考值", html)
+        self.assertIn("待审背景，不作优劣判断", html)
 
     def test_reports_literature_tests_and_borrowable_actions(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "report.html"
-            write_report(path, {"status": "REPORT_READY"}, [], [], guidance={
-                "assessment": "assessment", "data_facts": [], "cannot_determine": [], "hypotheses": [], "benchmark_comparisons": [], "theoretical_energy_assessment": {"conclusion": "x"}, "next_experiments": [],
-            }, benchmark={"research_synthesis": {"search_question": "What limits the interface?", "data_literature_connection": "The high polarization requires interface diagnosis.", "evidence_boundaries": ["Candidate sources need review."]}, "literature_studies": [{"study": "Interface stability", "tests": ["XPS", "EIS"], "question": "What fails?", "finding": "Interphase growth", "how_to_borrow": "Add XPS after cycling", "source_urls": ["https://example.org/paper"], "evidence_status": "web_search_candidate"}]})
+            write_report(
+                path,
+                {"status": "REPORT_READY"},
+                [],
+                [],
+                benchmark={
+                    "research_synthesis": {
+                        "search_question": "What limits the interface?",
+                        "data_literature_connection": "The measured polarization motivates interface checks.",
+                        "evidence_boundaries": ["Candidate sources need review."],
+                    },
+                    "literature_studies": [{
+                        "study": "Interface stability",
+                        "tests": ["XPS", "EIS"],
+                        "question": "What changes?",
+                        "finding": "Candidate interphase observation",
+                        "how_to_borrow": "Choose characterization after checking composition",
+                        "source_urls": ["https://example.org/paper"],
+                        "evidence_status": "web_search_candidate",
+                    }],
+                },
+            )
             html = path.read_text(encoding="utf-8")
-        self.assertIn("四、Codex 联网文献学习明细", html)
+        self.assertIn("四、文献与知识依据", html)
         self.assertIn("XPS", html)
-        self.assertIn("Add XPS after cycling", html)
-        self.assertIn("The high polarization requires interface diagnosis.", html)
+        self.assertIn("Choose characterization after checking composition", html)
         self.assertIn("文献学习结果", html)
-    def test_reports_user_confirmed_p2o5_reaction_energy_projection(self):
+
+    def test_material_name_does_not_trigger_reaction_or_commercial_defaults(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "report.html"
-            write_report(path, {"material_system": "P2O5|LPSC", "conditions": {}}, [], [], analysis={"gcd_summary": {"first_complete_average_discharge_voltage_V": 1.5}})
+            write_report(
+                path,
+                {"material_system": "P2O5|LPSC", "conditions": {}},
+                [],
+                [],
+                analysis={"gcd_summary": {"first_complete_average_discharge_voltage_V": 1.5}},
+            )
             html = path.read_text(encoding="utf-8")
-        self.assertIn("P₂O₅ + 16Li → 5Li₂O + 2Li₃P", html)
-        self.assertIn("3021", html)
-        self.assertIn("4531", html)
+        for forbidden in ("P₂O₅ + 16Li", "1675", "宁德时代", "麒麟", "LiTaCl₆"):
+            self.assertNotIn(forbidden, html)
+        self.assertIn("不作定量投影", html)
 
 
 class ReportFallbackConclusionTests(unittest.TestCase):
@@ -73,12 +187,11 @@ class ReportFallbackConclusionTests(unittest.TestCase):
                     "latest_polarization_voltage_V": 0.572,
                     "latest_coulombic_efficiency_percent": 96.71,
                 }},
-                benchmark={"codex_activity": [{"stage": "CODEX_ASSESSMENT", "status": "FAILED", "message": "failed", "details": {"error": "stream disconnected"}}]},
             )
             html = path.read_text(encoding="utf-8")
         self.assertIn("基于确定性数据的综合判断", html)
         self.assertIn("容量保持率为 48.80%", html)
-        self.assertIn("结合仪器步骤核对循环分段", html)
+        self.assertIn("重复电池和单变量实验确认趋势", html)
         self.assertNotIn("Codex 尚未形成通过结构校验的本轮评价", html)
 
 

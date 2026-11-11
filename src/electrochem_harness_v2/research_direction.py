@@ -39,16 +39,10 @@ def build_research_direction(analysis: Mapping, conditions: Mapping | None = Non
             observations.append("本轮登记的活性物质质量为 {:.3f} mg；该值作为仪器导出比容量的归一化记录，仍应与电极配方和仪器设置保持一致。".format(active_mass_mg))
         else:
             observations.append("本轮未登记活性物质质量，因此该比容量仅保留为仪器导出值。")
-        if first_capacity > 1675:
-            observations.append("按活性物质比容量这一单一指标，该初始数值具有进一步核验价值；它不是同构型电池性能优越结论。")
     if latest_capacity is not None and retention is not None:
         observations.append("最新导出放电比容量为 {:.1f} mAh g⁻¹，容量保持率为 {:.2f}%{}。".format(latest_capacity, retention, "（完整候选循环数：{}）".format(complete_cycles) if complete_cycles else ""))
-        if retention < 80:
-            risks.append("容量保持率低于 80%，当前主要性能短板是循环稳定性，而不是继续放大首圈容量。")
     if polarization is not None:
-        observations.append("最新容量加权充放电极化为 {:.3f} V。".format(polarization))
-        if polarization >= 0.3:
-            risks.append("极化达到 {:.3f} V，需优先排查复合正极传输和 P₂O₅｜LiTaCl₆ 接触界面的动力学限制。".format(polarization))
+        observations.append("最新容量加权充放电极化为 {:.3f} V。该数值应在测试条件一致的重复实验中解释。".format(polarization))
     if efficiency is not None:
         observations.append("最新库仑效率为 {:.2f}%。该数值不能独立证明长期可逆性，必须结合绝对容量保持和重复电池验证。".format(efficiency))
     if negative_voltage:
@@ -64,27 +58,27 @@ def build_research_direction(analysis: Mapping, conditions: Mapping | None = Non
             "decision_evidence": "步骤方向、容量重置与积分电量相互一致后，才能将完整循环的容量、效率和极化用于后续判断。",
         },
         {
-            "priority": "P1｜定位容量衰减",
-            "goal": "把容量下降区分为材料/反应变化、界面阻抗上升或测试定义问题。",
-            "single_variable": "在质量和步骤定义固定后，只比较早期与后期相同荷电状态样品。",
-            "decision_evidence": "配套循环曲线、阻抗变化以及同一表征方法的产物或界面信号，判断容量衰减是否与界面或产物演变同步。",
+            "priority": "P1｜验证容量趋势",
+            "goal": "通过重复实验确认容量变化，并区分材料、界面、传输或测试定义的影响。",
+            "single_variable": "在数据口径和步骤定义固定后，只比较相同测试条件与荷电状态的样品。",
+            "decision_evidence": "结合重复循环、阻抗或与假设匹配的表征，判断容量变化是否可重复并与其他信号同步。",
         },
         {
-            "priority": "P2｜降低极化",
-            "goal": "判断限制主要来自动力学、复合电极传输还是界面接触。",
-            "single_variable": "保持载量、压力、温度和配方不变，只改变测试电流。",
+            "priority": "P2｜检验倍率响应",
+            "goal": "判断测试电流变化是否影响容量和极化，并为后续机理假设提供数据。",
+            "single_variable": "保持已登记的其他实验条件不变，只改变测试电流。",
             "decision_evidence": "比较平均放电电压、极化和可逆容量随电流的变化；强烈电流依赖提示动力学或传输限制。",
         },
         {
             "priority": "P3｜验证反应与界面状态",
             "goal": "建立可追溯的反应/界面证据，而不是仅由曲线推断机理。",
             "single_variable": "固定同一电池配方，只改变取样荷电状态：原始、首圈放电平台后、首圈充电后和后期同状态。",
-            "decision_evidence": "采用 XPS 及可获得的结构表征，对比 P、O、Ta、Cl 等信号和可能产物的可逆变化；只有可重复、状态相关的证据才能支持机理假设。",
+            "decision_evidence": "采用与材料组成和待检验假设相匹配的结构或化学表征，对比不同荷电状态下的信号变化；只有可重复、状态相关的证据才能支持机理假设。",
         },
     ])
 
     if risks:
-        headline = "当前最优先的工作是结合仪器步骤核对循环分段，并围绕容量保持率与极化定位衰减和动力学限制。"
+        headline = "当前最优先的工作是核对数据质量标志、仪器步骤与循环分段，再在条件一致的重复实验中解释容量和极化变化。"
     else:
         headline = "当前数据质量标志未显示突出异常；下一步应通过重复电池和单变量实验确认趋势。"
     return {

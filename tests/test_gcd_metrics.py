@@ -30,6 +30,34 @@ class GcdMetricTests(unittest.TestCase):
         self.assertEqual(result["summary"]["maximum_complete_discharge_capacity_mAh_g"], 90.0)
         self.assertEqual(result["summary"]["maximum_complete_discharge_cycle"], 1)
 
+    def test_does_not_pair_across_unknown_segment(self):
+        segments = [
+            {"segment_id": "segment-1", "direction_candidate": "charge", "specific_capacity_mAh_g": 10.0, "closed_by_capacity_reset": True, "start_source_row": 2, "end_source_row": 3},
+            {"segment_id": "segment-2", "direction_candidate": "unknown", "specific_capacity_mAh_g": 1.0, "closed_by_capacity_reset": True, "start_source_row": 4, "end_source_row": 5},
+            {"segment_id": "segment-3", "direction_candidate": "discharge", "specific_capacity_mAh_g": 8.0, "closed_by_capacity_reset": True, "start_source_row": 6, "end_source_row": 7},
+        ]
+        points = tuple(
+            {"source_row": row, "capacity": float(row % 2), "voltage": float(row)}
+            for row in range(2, 8)
+        )
+        result = analyze_gcd_metrics(points, segments)
+        self.assertEqual(result["cycles"], [])
+
+    def test_explicit_and_current_sign_closures_complete_a_cycle(self):
+        segments = [
+            {"segment_id": "segment-1", "direction_candidate": "charge", "specific_capacity_mAh_g": 10.0, "closed_by_explicit_boundary": True, "start_source_row": 2, "end_source_row": 3},
+            {"segment_id": "segment-2", "direction_candidate": "discharge", "specific_capacity_mAh_g": 8.0, "closed_by_current_sign": True, "start_source_row": 4, "end_source_row": 5},
+        ]
+        points = (
+            {"source_row": 2, "capacity": 0.0, "voltage": 3.0},
+            {"source_row": 3, "capacity": 10.0, "voltage": 4.0},
+            {"source_row": 4, "capacity": 0.0, "voltage": 4.0},
+            {"source_row": 5, "capacity": 8.0, "voltage": 3.0},
+        )
+        result = analyze_gcd_metrics(points, segments)
+        self.assertTrue(result["cycles"][0]["complete"])
+        self.assertEqual(result["cycles"][0]["coulombic_efficiency_percent"], 80.0)
+
 
 if __name__ == "__main__":
     unittest.main()

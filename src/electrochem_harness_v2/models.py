@@ -99,7 +99,11 @@ class KnowledgeClaim:
             "claim_type": claim_type,
             "text": " ".join(text.split()),
             "metric_id": metric_id,
+            "value": value,
+            "unit": unit,
+            "conditions": dict(conditions or {}),
             "evidence_span_ids": list(evidence_span_ids),
+            "limitations": list(limitations),
         }
         return cls(
             claim_id="claim-" + stable_hash(identity)[:24],

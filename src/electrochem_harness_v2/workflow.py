@@ -1,21 +1,25 @@
 """Single, staged orchestration for the Harness-v2 research workflow."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+from typing import Any, Callable, Mapping
 
+from .analysis_dispatch import analyze_experiment, build_analysis_feature_packet, summarize_analysis_replicates
 from .benchmarks import build_benchmark_topics
-from .gcd_metrics import build_codex_feature_packet
-from .codex_client import CodexResearchClient
-from .context_builder import ContextBuilder, ContextBuildResult
+from .cache_policy import CachePolicy, DEFAULT_CACHE_TTL_SECONDS, fingerprint
+from .codex_client import ADAPTER_VERSION, PROMPT_VERSIONS, CodexResearchClient, codex_model_identity
+from .context_builder import ContextBuilder, ContextBuildResult, stable_hash
 from .csv_importer import GcdCsvImporter
-from .origin_adapter import OriginAdapter
+from .gcd_metrics import analyze_gcd_metrics
+from .origin_adapter import OriginAdapter, OriginPlotResult
 from .origin_data import prepare_origin_tables
 from .pdf_reader import LocalPdfReader
 from .report import write_report
+from .search import SEARCH_ADAPTER_VERSION
 from .storage import ResearchStore
 from .theoretical_energy import derive_theoretical_energy
 
@@ -49,6 +53,10 @@ class ResearchWorkflow:
                 raise ValueError("config.json is not valid JSON.") from error
             origin_executable = config.get("origin_executable")
         context_config = dict(config.get("context_management") or {})
+        self.config = config
+        self.cache_policy = CachePolicy(
+            ttl_seconds=int(context_config.get("search_cache_ttl_seconds", DEFAULT_CACHE_TTL_SECONDS))
+        )
         allowed_context_keys = {
             "max_input_tokens", "reserved_output_tokens", "max_approved_claims",
             "max_candidate_claims", "max_metadata_records",
@@ -100,6 +108,30 @@ class ResearchWorkflow:
         path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
         ResearchWorkflow._update_manifest(output_dir, artifact="codex_activity.json")
 
+    def _invocation_recorder(self, project_id: str, stage: str, run_id: str | None = None):
+        """Return a recorder that appends to SQLite and a unique audit file."""
+        if run_id:
+            base = self.output_root / project_id / "runs" / run_id
+        else:
+            base = self.output_root / project_id
+        directory = base / "codex_invocations"
+
+        def record(payload: dict) -> None:
+            stored = dict(payload)
+            stored["project_id"] = project_id
+            stored["run_id"] = run_id
+            stored["stage"] = stage
+            invocation_id = self.store.save_codex_invocation(project_id, run_id, stage, stored)
+            directory.mkdir(parents=True, exist_ok=True)
+            relative = "codex_invocations/{}.json".format(invocation_id)
+            path = directory / "{}.json".format(invocation_id)
+            with path.open("x", encoding="utf-8") as stream:
+                json.dump(stored, stream, ensure_ascii=False, sort_keys=True, indent=2)
+            if run_id and (base / "manifest.json").is_file():
+                self._update_manifest(base, artifact=relative)
+
+        return record
+
     @staticmethod
     def _record_summaries(records: list[dict], limit: int = 20) -> list[dict]:
         summaries = []
@@ -144,16 +176,36 @@ class ResearchWorkflow:
         directory.mkdir(parents=True, exist_ok=True)
         bundle_path = directory / "{}.bundle.json".format(stage)
         manifest_path = directory / "{}.manifest.json".format(stage)
-        bundle_path.write_text(json.dumps(dict(result.bundle), ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
-        manifest_path.write_text(json.dumps(dict(result.manifest), ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
+        bundle_json = json.dumps(dict(result.bundle), ensure_ascii=False, sort_keys=True, indent=2)
+        manifest_json = json.dumps(dict(result.manifest), ensure_ascii=False, sort_keys=True, indent=2)
+        # Compatibility pointers retain their historical names. Every build also
+        # gets unique, create-only files so rebuilding a stage cannot erase audit history.
+        bundle_path.write_text(bundle_json, encoding="utf-8")
+        manifest_path.write_text(manifest_json, encoding="utf-8")
+        record_id = str(result.manifest.get("record_id") or "")
+        if not record_id:
+            raise ValueError("Context manifest requires an immutable record_id.")
+        versions = directory / "versions"
+        versions.mkdir(parents=True, exist_ok=True)
+        version_bundle = versions / "{}.bundle.json".format(record_id)
+        version_manifest = versions / "{}.manifest.json".format(record_id)
+        with version_bundle.open("x", encoding="utf-8") as stream:
+            stream.write(bundle_json)
+        with version_manifest.open("x", encoding="utf-8") as stream:
+            stream.write(manifest_json)
         self.store.save_context_record(project_id, run_id, stage, dict(result.manifest))
         if base is not None:
             bundle_ref = "contexts/{}.bundle.json".format(stage)
             manifest_ref = "contexts/{}.manifest.json".format(stage)
+            version_bundle_ref = "contexts/versions/{}.bundle.json".format(record_id)
+            version_manifest_ref = "contexts/versions/{}.manifest.json".format(record_id)
             self._update_manifest(base, artifact=bundle_ref)
-            self._update_manifest(base, artifact=manifest_ref, **{
+            self._update_manifest(base, artifact=manifest_ref)
+            self._update_manifest(base, artifact=version_bundle_ref)
+            self._update_manifest(base, artifact=version_manifest_ref, **{
                 "{}_context_hash".format(stage): result.context_hash,
                 "{}_context_tokens_estimated".format(stage): result.estimated_input_tokens,
+                "{}_context_record_id".format(stage): record_id,
             })
         return bundle_path, manifest_path
 
@@ -189,7 +241,7 @@ class ResearchWorkflow:
                 "approve_knowledge": False,
                 "control_equipment": False,
             },
-            model_identity={"provider": "openai-codex", "adapter": "CodexResearchClient"},
+            model_identity=codex_model_identity(stage),
             run_id=run_id,
         )
         self._persist_context(project_id, stage, result, run_id=run_id)
@@ -223,7 +275,7 @@ class ResearchWorkflow:
             "research_objective": "基于实验数据、可追溯文献与受控对照，识别性能信号、数据边界、竞争解释和下一轮判别实验。",
         }
         if analysis:
-            context["deterministic_features"] = build_codex_feature_packet(analysis)
+            context["deterministic_features"] = build_analysis_feature_packet(analysis)
         return context
 
     def search_literature(self, project_id: str, keywords: list[str]):
@@ -231,7 +283,14 @@ class ResearchWorkflow:
         result = LiteratureSearchAdapter().search(keywords)
         target = self.output_root / project_id / "searches"
         target.mkdir(parents=True, exist_ok=True)
-        (target / "literature_search.json").write_text(json.dumps({"query": result.query, "searched_at": result.searched_at, "status": result.status, "error": result.error, "records": result.records}, ensure_ascii=False, indent=2), encoding="utf-8")
+        (target / "literature_search.json").write_text(json.dumps({
+            "query": result.query,
+            "searched_at": result.searched_at,
+            "status": result.status,
+            "error": result.error,
+            "source_status": result.source_status,
+            "records": result.records,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
         return result
 
     def extract_pdf_candidates(self, project_id: str, source_id: str, thread_id: str | None = None):
@@ -241,7 +300,10 @@ class ResearchWorkflow:
             "pdf_candidate_extraction",
             source_id=source_id,
         )
-        client = CodexResearchClient(str(self.project_root))
+        client = CodexResearchClient(
+            str(self.project_root),
+            invocation_recorder=self._invocation_recorder(project_id, "pdf_candidate_extraction"),
+        )
         returned_thread_id, claims, rejected = client.extract_candidates(
             managed_context.bundle,
             source_id,
@@ -288,7 +350,10 @@ class ResearchWorkflow:
             analysis=analysis_payload,
             online_research=online,
         )
-        client = CodexResearchClient(str(self.project_root))
+        client = CodexResearchClient(
+            str(self.project_root),
+            invocation_recorder=self._invocation_recorder(project_id, "literature_synthesis", context_run_id),
+        )
         try:
             returned_thread_id, digest, claims, rejected = client.synthesize_literature(
                 managed_context.bundle,
@@ -326,32 +391,92 @@ class ResearchWorkflow:
             self._update_manifest(output_dir, artifact="literature_review.json", literature_review_status=result["status"], codex_curated_count=len(claims))
         return result
 
-    def analyze_data(self, project_id: str, path: Path | str, conditions: dict) -> ExperimentRun:
-        imported = self.csv_importer.read(path)
+    @staticmethod
+    def _source_sha256(source: Any) -> str:
+        if isinstance(source, (str, Path)):
+            return hashlib.sha256(Path(source).read_bytes()).hexdigest()
+        encoded = json.dumps(source, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def analyze_data(
+        self,
+        project_id: str,
+        path: Any,
+        conditions: dict,
+        analysis_type: str = "gcd",
+        *,
+        _run_id: str | None = None,
+    ) -> ExperimentRun:
+        """Run deterministic method dispatch and persist the common analysis envelope."""
+        method = str(analysis_type or "gcd").strip().casefold()
+        analysis = analyze_experiment(method, path, conditions)
+        raw_hash = str((analysis.get("metadata") or {}).get("sha256") or self._source_sha256(path))
+        analysis.setdefault("metadata", {})["sha256"] = raw_hash
         approved = self.store.list_approved_claims(project_id)
-        status = "DATA_ANALYZED" if approved else "NEEDS_REVIEW"
-        run_id = self.store.create_run(project_id, imported.metadata.sha256, dict(conditions), status)
+        legacy_status = "DATA_ANALYZED" if approved else "NEEDS_REVIEW"
+        run_id = _run_id or self.store.create_run(project_id, raw_hash, dict(conditions), legacy_status)
+        if _run_id:
+            run = self.store.get_run(run_id)
+            if run["project_id"] != project_id or run["raw_data_sha256"] != raw_hash:
+                raise ValueError("Selected data no longer matches the run raw-data hash.")
         output_dir = self.output_root / project_id / "runs" / run_id
         output_dir.mkdir(parents=True, exist_ok=True)
-        analysis = {"metadata": imported.metadata.__dict__, "analysis": imported.analysis}
         (output_dir / "analysis.json").write_text(json.dumps(analysis, ensure_ascii=False, indent=2), encoding="utf-8")
-        (output_dir / "manifest.json").write_text(json.dumps({
-            "run_id": run_id, "project_id": project_id, "raw_data_sha256": imported.metadata.sha256,
-            "status": status, "artifacts": ["analysis.json"], "origin_status": "PENDING",
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
-        self.store.save_analysis_artifact(run_id, "csv_analysis", analysis)
-        return ExperimentRun(run_id, project_id, imported.metadata.sha256, status, output_dir)
+        manifest_path = output_dir / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+        manifest.update({
+            "run_id": run_id,
+            "project_id": project_id,
+            "raw_data_sha256": raw_hash,
+            "analysis_type": method,
+            "status": manifest.get("status", legacy_status),
+            "origin_status": manifest.get("origin_status", "PENDING"),
+        })
+        artifacts = list(manifest.get("artifacts") or [])
+        if "analysis.json" not in artifacts:
+            artifacts.append("analysis.json")
+        manifest["artifacts"] = artifacts
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.store.save_analysis_artifact(run_id, "{}_analysis".format(method), analysis)
+        return ExperimentRun(run_id, project_id, raw_hash, legacy_status, output_dir)
 
     def prepare_origin(self, project_id: str, run_id: str, raw_data_path: Path | str):
         run = self.store.get_run(run_id)
         if run["project_id"] != project_id:
             raise ValueError("Run does not belong to this project.")
-        imported = self.csv_importer.read(raw_data_path)
-        if imported.metadata.sha256 != run["raw_data_sha256"]:
-            raise ValueError("Selected data no longer matches the run raw-data hash.")
         output_dir = self.output_root / project_id / "runs" / run_id
-        tables = prepare_origin_tables(imported, output_dir / "origin_input")
-        result = self.origin_adapter.plot(output_dir, tables["curves"], tables["summary"], run_id, imported.metadata.sha256, tables.get("initial_discharge"))
+        analysis_path = output_dir / "analysis.json"
+        envelope = json.loads(analysis_path.read_text(encoding="utf-8")) if analysis_path.is_file() else {}
+        method = str(envelope.get("analysis_type") or "gcd").casefold()
+        if method != "gcd":
+            origin_dir = output_dir / "origin"
+            origin_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = origin_dir / "origin_manifest.json"
+            payload = {
+                "run_id": run_id,
+                "raw_data_sha256": run["raw_data_sha256"],
+                "analysis_type": method,
+                "status": "PLOT_NOT_AVAILABLE_FOR_METHOD",
+                "reason": "The legacy Origin engine is available only for GCD analysis.",
+                "figures": [],
+            }
+            manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            result = OriginPlotResult(
+                "PLOT_NOT_AVAILABLE_FOR_METHOD", manifest_path,
+                origin_dir / "electrochemistry.opju", tuple(), payload["reason"],
+            )
+        else:
+            imported = self.csv_importer.read(raw_data_path, conditions=run["input_conditions"])
+            if imported.metadata.sha256 != run["raw_data_sha256"]:
+                raise ValueError("Selected data no longer matches the run raw-data hash.")
+            persisted = envelope.get("analysis") if isinstance(envelope.get("analysis"), dict) else None
+            if persisted and persisted.get("segments"):
+                imported = replace(imported, analysis=dict(persisted))
+            tables = prepare_origin_tables(imported, output_dir / "origin_input")
+            result = self.origin_adapter.plot(
+                output_dir, tables["curves"], tables["summary"], run_id,
+                imported.metadata.sha256, tables.get("initial_discharge"),
+            )
         self.store.save_analysis_artifact(run_id, "origin", {"status": result.status, "reason": result.reason, "manifest": result.manifest_path.name})
         run_manifest_path = output_dir / "manifest.json"
         manifest = json.loads(run_manifest_path.read_text(encoding="utf-8"))
@@ -379,6 +504,7 @@ class ResearchWorkflow:
         output_dir = self.output_root / project_id / "runs" / run_id
         analysis_payload = json.loads((output_dir / "analysis.json").read_text(encoding="utf-8"))
         analysis = analysis_payload["analysis"]
+        analysis_type = str(analysis_payload.get("analysis_type") or "gcd").casefold()
         research_context = self._build_research_context(project_id, run["input_conditions"], analysis_payload)
         topic_context = " ".join(dict.fromkeys([
             str(research_context["project_name"]),
@@ -386,13 +512,47 @@ class ResearchWorkflow:
             *[str(term) for term in research_context["keywords"]],
             *[str(term) for term in system_keywords],
         ]))
-        topics = build_benchmark_topics(topic_context, analysis)
-        fingerprint = hashlib.sha256(json.dumps(topics, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-        cached = self.store.get_search_cache(fingerprint)
-        cache_usable = self._is_current_web_research_cache(cached)
-        self._record_codex_activity(output_dir, "CODEX_WEB_SEARCH", "STARTED", "开始联网检索文献、标准和主流体系", {"topics": topics, "cache_hit": cache_usable, "stale_cache_discarded": cached is not None and not cache_usable})
+        topics = build_benchmark_topics(topic_context, analysis, analysis_type)
+        cache_key = fingerprint({"benchmark_topics": topics})
+        prompt_version = PROMPT_VERSIONS.get("online_research", "unknown")
+        adapter_version = {
+            "codex_adapter": ADAPTER_VERSION,
+            "search_adapter": SEARCH_ADAPTER_VERSION,
+        }
+        model_identity = codex_model_identity("online_research")
+        context_identity = stable_hash({
+            "research_context": research_context,
+            "knowledge": [claim.to_dict() for claim in self.store.list_claims(project_id)],
+            "research_memory": self.store.get_research_state(project_id),
+            "context_policy": {
+                "max_input_tokens": self.context_builder.max_input_tokens,
+                "reserved_output_tokens": self.context_builder.reserved_output_tokens,
+                "max_approved_claims": self.context_builder.max_approved_claims,
+                "max_candidate_claims": self.context_builder.max_candidate_claims,
+                "max_metadata_records": self.context_builder.max_metadata_records,
+            },
+        })
+        cached_entry = self.store.get_search_cache(cache_key)
+        cache_status = self.cache_policy.classify(
+            cached_entry,
+            prompt=prompt_version,
+            adapter=adapter_version,
+            model=model_identity,
+            context=context_identity,
+            topic=topics,
+        )
+        cache_usable = cache_status == "fresh" and self._is_current_web_research_cache(cached_entry.get("payload"))
+        if cache_status == "fresh" and not cache_usable:
+            cache_status = "incompatible"
+        self._record_codex_activity(output_dir, "CODEX_WEB_SEARCH", "STARTED", "开始联网检索文献、标准和主流体系", {
+            "topics": topics,
+            "cache_status": cache_status,
+            "cache_hit": cache_usable,
+            "cache_expired": cache_status == "stale",
+            "cache_incompatible": cache_status == "incompatible",
+        })
         if cache_usable:
-            result = dict(cached)
+            result = dict(cached_entry["payload"])
             result["cache_reused"] = True
         else:
             from .search import LiteratureSearchAdapter
@@ -401,7 +561,15 @@ class ResearchWorkflow:
             query_audit = []
             for topic in topics[:6]:
                 search = adapter.search([topic], rows=5)
-                query_audit.append({"query": search.query, "searched_at": search.searched_at, "status": search.status, "error": search.error, "record_count": len(search.records), "records": self._record_summaries(search.records, limit=8)})
+                query_audit.append({
+                    "query": search.query,
+                    "searched_at": search.searched_at,
+                    "status": search.status,
+                    "error": search.error,
+                    "source_status": dict(getattr(search, "source_status", {}) or {}),
+                    "record_count": len(search.records),
+                    "records": self._record_summaries(search.records, limit=8),
+                })
                 api_records.extend(search.records)
             managed_context = self._build_managed_context(
                 project_id,
@@ -411,7 +579,10 @@ class ResearchWorkflow:
                 analysis=analysis_payload,
                 candidate_metadata=api_records,
             )
-            codex = CodexResearchClient(str(self.project_root))
+            codex = CodexResearchClient(
+                str(self.project_root),
+                invocation_recorder=self._invocation_recorder(project_id, "online_research", run_id),
+            )
             online = codex.research_online(
                 managed_context.bundle,
                 topics,
@@ -419,19 +590,30 @@ class ResearchWorkflow:
             )
             theory = None
             model = online.get("theoretical_model")
-            if model:
+            if analysis_type == "gcd" and model:
                 try:
                     theory = derive_theoretical_energy(model, analysis)
                 except (KeyError, TypeError, ValueError) as error:
                     theory = {"status": "not_calculated", "reason": str(error), "model": model}
-            result = {"fingerprint": fingerprint, "topics": topics, "query_audit": query_audit, "api_records": api_records, "codex_web_research": online, "literature_studies": online.get("literature_studies") or [], "theoretical_energy": theory, "cache_reused": False}
-            self.store.save_search_cache(fingerprint, result)
+            result = {"fingerprint": cache_key, "topics": topics, "query_audit": query_audit, "api_records": api_records, "codex_web_research": online, "literature_studies": online.get("literature_studies") or [], "theoretical_energy": theory, "cache_reused": False, "cache_status": cache_status}
+            cache_entry = self.cache_policy.create(
+                result,
+                prompt=prompt_version,
+                adapter=adapter_version,
+                model=model_identity,
+                context=context_identity,
+                topic=topics,
+            )
+            self.store.save_search_cache(cache_key, cache_entry)
         model = (result.get("codex_web_research") or {}).get("theoretical_model")
-        if model:
+        if analysis_type == "gcd" and model:
             try:
                 result["theoretical_energy"] = derive_theoretical_energy(model, analysis)
             except (TypeError, ValueError) as error:
                 result["theoretical_energy"] = {"status": "not_calculated", "reason": str(error), "model": model}
+        elif analysis_type != "gcd":
+            result["theoretical_energy"] = None
+        result["cache_status"] = cache_status
         result.setdefault("literature_studies", (result.get("codex_web_research") or {}).get("literature_studies") or [])
         (output_dir / "benchmark_research.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         online = result.get("codex_web_research") or {}
@@ -463,7 +645,7 @@ class ResearchWorkflow:
         if not analysis_path.is_file() or not origin_path.is_file():
             raise ValueError("Run requires deterministic analysis and an Origin manifest before Codex assessment.")
         analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
-        feature_packet = build_codex_feature_packet(analysis)
+        feature_packet = build_analysis_feature_packet(analysis)
         origin = json.loads(origin_path.read_text(encoding="utf-8"))
         benchmark_path = output_dir / "benchmark_research.json"
         benchmark = json.loads(benchmark_path.read_text(encoding="utf-8")) if benchmark_path.is_file() else {}
@@ -495,7 +677,10 @@ class ResearchWorkflow:
             "origin_status": origin.get("status"),
             "online_source_count": len((benchmark.get("codex_web_research") or {}).get("sources") or []),
         })
-        client = CodexResearchClient(str(self.project_root))
+        client = CodexResearchClient(
+            str(self.project_root),
+            invocation_recorder=self._invocation_recorder(project_id, "codex_assessment", run_id),
+        )
         try:
             next_thread_id, guidance = client.evaluate_project(
                 managed_context.bundle,
@@ -544,7 +729,7 @@ class ResearchWorkflow:
         )
         return next_thread_id, guidance
 
-    def run_all(
+    def _run_all_legacy(
         self,
         project_id: str,
         data_path: Path | str,
@@ -565,7 +750,7 @@ class ResearchWorkflow:
         pdf_thread_id: str | None = None
         search_audit: dict = {"status": "SKIPPED", "keywords": terms}
         pdf_audit: dict = {"status": "SKIPPED"}
-        if terms:
+        if terms and use_online_research:
             emit("SEARCH", "正在检索可追溯文献元数据…", {"keywords": terms})
             try:
                 search = self.search_literature(project_id, terms)
@@ -645,42 +830,613 @@ class ResearchWorkflow:
             except Exception as error:
                 result["errors"].append("Codex assessment: {}".format(error))
                 emit("CODEX_ASSESSMENT", "Codex 评估未通过结构校验，报告保留确定性结果。", {"error": str(error)})
-        self._update_manifest(run.output_dir, errors=result["errors"], completed_stages=["SEARCH", "PDF", "DATA", "BENCHMARK_RESEARCH", "CODEX_KNOWLEDGE", "ORIGIN", "CODEX_ASSESSMENT", "REPORT"])
+        self._update_manifest(run.output_dir, errors=result["errors"])
         result["report"] = self.build_report(project_id, run.run_id)
         emit("REPORT", "图文报告已生成。", {"report": result["report"].name, "errors": result["errors"]})
         return result
 
+    def _sync_stage_manifest(self, output_dir: Path, run_id: str) -> None:
+        stages = self.store.list_run_stages(run_id)
+        statuses = {row["stage"]: row["status"] for row in stages}
+        self._update_manifest(
+            output_dir,
+            stage_statuses=statuses,
+            completed_stages=[row["stage"] for row in stages if row["status"] == "COMPLETED"],
+        )
+
+    @staticmethod
+    def _stage_artifacts_exist(output_dir: Path, stage: dict) -> bool:
+        paths = list(stage.get("artifact_paths") or [])
+        return all((output_dir / path).is_file() for path in paths)
+
+    def _start_stage(self, run_id: str, output_dir: Path, stage: str, recoverable: dict | None = None) -> bool:
+        """Start a stage, or return False when a completed stage is safely reusable."""
+        try:
+            current = self.store.get_run_stage(run_id, stage)
+        except KeyError:
+            current = None
+        if current and current["status"] == "RUNNING":
+            self.store.finish_run_stage(run_id, stage, "PARTIAL", "Interrupted before a terminal stage status was recorded.")
+            current = self.store.get_run_stage(run_id, stage)
+        if current and current["status"] == "COMPLETED" and self._stage_artifacts_exist(output_dir, current):
+            self._sync_stage_manifest(output_dir, run_id)
+            return False
+        self.store.start_run_stage(run_id, stage, recoverable)
+        self._sync_stage_manifest(output_dir, run_id)
+        return True
+
+    def _finish_stage(
+        self,
+        run_id: str,
+        output_dir: Path,
+        stage: str,
+        status: str,
+        *,
+        error: str | None = None,
+        artifacts: list[str] | None = None,
+        recoverable: dict | None = None,
+    ) -> dict:
+        try:
+            current = self.store.get_run_stage(run_id, stage)
+        except KeyError:
+            self.store.start_run_stage(run_id, stage, recoverable)
+        else:
+            if current["status"] != "RUNNING":
+                self.store.start_run_stage(run_id, stage, recoverable)
+        row = self.store.finish_run_stage(
+            run_id, stage, status, error=error, artifact_paths=artifacts, recoverable_input=recoverable,
+        )
+        self._sync_stage_manifest(output_dir, run_id)
+        return row
+
+    def _skip_stage(self, run_id: str, output_dir: Path, stage: str, reason: str) -> dict | None:
+        if not self._start_stage(run_id, output_dir, stage):
+            return None
+        return self._finish_stage(run_id, output_dir, stage, "SKIPPED", error=reason)
+
+    def _cancel_remaining(self, run_id: str, output_dir: Path, stages: list[str], reason: str) -> None:
+        for stage in stages:
+            try:
+                current = self.store.get_run_stage(run_id, stage)
+            except KeyError:
+                current = None
+            if current and current["status"] == "COMPLETED" and self._stage_artifacts_exist(output_dir, current):
+                continue
+            self._finish_stage(run_id, output_dir, stage, "CANCELLED", error=reason)
+        self.store.update_run_status(run_id, "CANCELLED")
+        self._update_manifest(output_dir, status="CANCELLED")
+
+    def review_gcd_segments(
+        self,
+        project_id: str,
+        run_id: str,
+        data_path: Path | str,
+        decisions: list[Mapping[str, Any]],
+    ) -> dict:
+        """Apply append-only human segment decisions and recompute GCD cycles."""
+        run = self.store.get_run(run_id)
+        if run["project_id"] != project_id:
+            raise ValueError("Run does not belong to this project.")
+        imported = self.csv_importer.read(data_path, conditions=run["input_conditions"])
+        if imported.metadata.sha256 != run["raw_data_sha256"]:
+            raise ValueError("Selected data no longer matches the run raw-data hash.")
+        output_dir = self.output_root / project_id / "runs" / run_id
+        analysis_path = output_dir / "analysis.json"
+        envelope = json.loads(analysis_path.read_text(encoding="utf-8"))
+        if str(envelope.get("analysis_type") or "gcd").casefold() != "gcd":
+            raise ValueError("Segment review is available only for GCD analysis.")
+        native = dict(envelope.get("analysis") or {})
+        segments = [dict(row) for row in native.get("segments") or []]
+        by_id = {str(row.get("segment_id")): row for row in segments}
+        audit_path = output_dir / "segment_review.json"
+        existing = json.loads(audit_path.read_text(encoding="utf-8")) if audit_path.is_file() else {"events": []}
+        events = list(existing.get("events") or [])
+        before_hash = stable_hash(segments)
+        for item in decisions:
+            if not isinstance(item, Mapping):
+                raise TypeError("Each segment decision must be a mapping.")
+            required = ("segment_id", "reviewer", "reason")
+            if any(not str(item.get(key) or "").strip() for key in required):
+                raise ValueError("Each decision requires segment_id, reviewer, and reason.")
+            status = str(item.get("status") or item.get("decision") or "").strip().casefold()
+            if status not in {"approved", "rejected"}:
+                raise ValueError("Each decision status must be approved or rejected.")
+            segment_id = str(item["segment_id"]).strip()
+            if segment_id not in by_id:
+                raise ValueError("Unknown segment_id: {}".format(segment_id))
+            row = by_id[segment_id]
+            previous = {
+                "review_status": row.get("review_status"),
+                "direction_candidate": row.get("direction_candidate"),
+                "origin_eligible": row.get("origin_eligible"),
+            }
+            if status == "approved":
+                direction = str(item.get("direction") or "").strip().casefold()
+                if direction not in {"charge", "discharge"}:
+                    raise ValueError("Approved decisions require direction=charge or discharge.")
+                row["direction_candidate"] = direction
+                row["review_status"] = "reviewed"
+                row["origin_eligible"] = True
+                row["human_reviewed"] = True
+            else:
+                direction = None
+                row["original_direction_candidate"] = row.get("direction_candidate")
+                row["direction_candidate"] = "rejected"
+                row["review_status"] = "rejected"
+                row["origin_eligible"] = False
+                row["human_reviewed"] = True
+            events.append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "segment_id": segment_id,
+                "status": status,
+                "direction": direction,
+                "reviewer": str(item["reviewer"]).strip(),
+                "reason": str(item["reason"]).strip(),
+                "previous": previous,
+            })
+        time_info = ((native.get("unit_normalization") or {}).get("time") or {})
+        recalculated = analyze_gcd_metrics(
+            imported.points,
+            segments,
+            active_material_mass_mg=run["input_conditions"].get("active_material_mass_mg"),
+            time_reliable=bool(time_info.get("explicit")),
+        )
+        native["segments"] = recalculated["segments"]
+        native["cycles"] = recalculated["cycles"]
+        native["gcd_summary"] = recalculated["summary"]
+        native["warnings"] = list(dict.fromkeys([*(native.get("warnings") or []), *(recalculated.get("warnings") or [])]))
+        envelope["analysis"] = native
+        envelope["quality_flags"] = list(native.get("warnings") or [])
+        analysis_path.write_text(json.dumps(envelope, ensure_ascii=False, indent=2), encoding="utf-8")
+        audit = {
+            "schema_version": "1.0",
+            "project_id": project_id,
+            "run_id": run_id,
+            "raw_data_sha256": run["raw_data_sha256"],
+            "before_segments_hash": before_hash,
+            "reviewed_segments_hash": stable_hash(native["segments"]),
+            "events": events,
+        }
+        audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.store.save_analysis_artifact(run_id, "segment_review", audit)
+        self._update_manifest(output_dir, artifact="segment_review.json", segment_review_hash=audit["reviewed_segments_hash"])
+        invalidated = []
+        for stage in (
+            "BENCHMARK_RESEARCH",
+            "CODEX_KNOWLEDGE",
+            "ORIGIN",
+            "CODEX_ASSESSMENT",
+            "REPORT",
+        ):
+            try:
+                current = self.store.get_run_stage(run_id, stage)
+            except KeyError:
+                continue
+            if current["status"] == "RUNNING":
+                self.store.finish_run_stage(
+                    run_id,
+                    stage,
+                    "PARTIAL",
+                    "Human segment review changed deterministic GCD results.",
+                )
+            else:
+                self.store.start_run_stage(
+                    run_id,
+                    stage,
+                    {"invalidated_by": "segment_review"},
+                )
+                self.store.finish_run_stage(
+                    run_id,
+                    stage,
+                    "PARTIAL",
+                    "Human segment review changed deterministic GCD results.",
+                )
+            invalidated.append(stage)
+        if invalidated:
+            self.store.update_run_status(run_id, "PARTIAL")
+            self._sync_stage_manifest(output_dir, run_id)
+            self._update_manifest(
+                output_dir,
+                status="PARTIAL",
+                invalidated_stages=invalidated,
+            )
+        return envelope
+
+    def summarize_runs(
+        self,
+        project_id: str,
+        run_ids: list[str],
+        metric: str,
+        unit: str | None = None,
+    ) -> dict:
+        """Persist descriptive same-project replicate statistics in a report envelope."""
+        if len(run_ids) < 2:
+            raise ValueError("At least two run_ids are required.")
+        if len(set(run_ids)) != len(run_ids):
+            raise ValueError("run_ids must identify distinct runs.")
+        analyses = []
+        identities = []
+        analysis_types: set[str] = set()
+        for run_id in run_ids:
+            run = self.store.get_run(run_id)
+            if run["project_id"] != project_id:
+                raise ValueError("All runs must belong to the requested project.")
+            path = self.output_root / project_id / "runs" / run_id / "analysis.json"
+            if not path.is_file():
+                raise ValueError("Run {} has no analysis.json artifact.".format(run_id))
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            analyses.append(payload)
+            analysis_types.add(str(payload.get("analysis_type") or "gcd").casefold())
+            identities.append({
+                "run_id": run_id,
+                "raw_data_sha256": run["raw_data_sha256"],
+                "analysis_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            })
+        if len(analysis_types) != 1:
+            raise ValueError("Replicate runs must use the same analysis_type.")
+        summary = summarize_analysis_replicates(analyses, metric, unit=unit)
+        replicate_hash = stable_hash({"project_id": project_id, "runs": identities, "metric": metric, "unit": unit})
+        envelope = {
+            "schema_version": "1.0",
+            "analysis_type": "replicates",
+            "metadata": {
+                "project_id": project_id,
+                "run_ids": list(run_ids),
+                "metric": metric,
+                "unit": summary.get("unit"),
+                "replicate_hash": replicate_hash,
+            },
+            "analysis": summary,
+            "limitations": list(summary.get("limitations") or []),
+            "quality_flags": list(summary.get("quality_flags") or []),
+        }
+        target_dir = self.output_root / project_id / "replicates"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / "replicate-{}.json".format(replicate_hash)
+        project = next(
+            (item for item in self.store.list_projects() if item["project_id"] == project_id),
+            None,
+        )
+        if project is None:
+            raise KeyError("Project does not exist.")
+        report_target = target_dir / "replicate-{}.html".format(replicate_hash)
+        write_report(
+            report_target,
+            {
+                "status": "REPORT_READY",
+                "project_id": project_id,
+                "project_name": project["name"],
+                "material_system": project["material_system"],
+                "keywords": project["keywords"],
+                "conditions": {},
+            },
+            [],
+            [],
+            analysis=envelope,
+        )
+        envelope["metadata"]["report"] = report_target.name
+        target.write_text(json.dumps(envelope, ensure_ascii=False, indent=2), encoding="utf-8")
+        return envelope
+
+    def run_all(
+        self,
+        project_id: str,
+        data_path: Any,
+        conditions: dict,
+        *,
+        analysis_type: str = "gcd",
+        pdf_path: Path | str | None = None,
+        keywords: list[str] | None = None,
+        use_codex_candidates: bool = True,
+        use_codex_assessment: bool = True,
+        use_online_research: bool = True,
+        progress=None,
+        cancel_requested: Callable[[], bool] | None = None,
+        _resume_run_id: str | None = None,
+    ) -> dict:
+        """Run or resume the staged workflow with durable, truthful stage states."""
+        emit = progress or (lambda _stage, _message, _details: None)
+        cancelled = cancel_requested or (lambda: False)
+        method = str(analysis_type or "gcd").strip().casefold()
+        raw_hash = self._source_sha256(data_path)
+        if _resume_run_id:
+            stored_run = self.store.get_run(_resume_run_id)
+            if stored_run["project_id"] != project_id:
+                raise ValueError("Run does not belong to this project.")
+            if stored_run["raw_data_sha256"] != raw_hash:
+                raise ValueError("Selected data no longer matches the run raw-data hash.")
+            run_id = _resume_run_id
+            self.store.update_run_status(run_id, "RUNNING")
+        else:
+            run_id = self.store.create_run(project_id, raw_hash, dict(conditions), "RUNNING")
+        output_dir = self.output_root / project_id / "runs" / run_id
+        output_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = output_dir / "manifest.json"
+        if not manifest_path.is_file():
+            manifest_path.write_text(json.dumps({
+                "run_id": run_id, "project_id": project_id, "raw_data_sha256": raw_hash,
+                "analysis_type": method, "status": "RUNNING", "artifacts": [], "origin_status": "PENDING",
+                "stage_statuses": {}, "completed_stages": [],
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+        else:
+            self._update_manifest(output_dir, status="RUNNING", analysis_type=method)
+        stages = [
+            "SEARCH", "PDF", "CODEX_PDF", "DATA", "BENCHMARK_RESEARCH",
+            "CODEX_KNOWLEDGE", "ORIGIN", "CODEX_ASSESSMENT", "REPORT",
+        ]
+        result: dict[str, Any] = {
+            "project_id": project_id, "search_status": "SKIPPED", "document": None,
+            "candidate_count": 0, "raw_candidate_count": 0, "candidate_rejections": [],
+            "knowledge_review": None, "run": None, "origin": None, "guidance": None,
+            "report": None, "errors": [],
+        }
+        result["run"] = ExperimentRun(run_id, project_id, raw_hash, "RUNNING", output_dir)
+        terms = list(keywords or [])
+        benchmark: dict = {}
+        pdf_thread_id: str | None = None
+        document = None
+        search_audit: dict = {"status": "SKIPPED", "keywords": terms}
+        pdf_audit: dict = {"status": "SKIPPED"}
+
+        def stop_if_cancelled(index: int) -> bool:
+            if not cancelled():
+                return False
+            self._cancel_remaining(run_id, output_dir, stages[index:], "Cancellation requested by user.")
+            return True
+
+        if stop_if_cancelled(0):
+            return result
+        if terms and use_online_research:
+            if self._start_stage(run_id, output_dir, "SEARCH", {"keywords": terms}):
+                emit("SEARCH", "正在检索可追溯文献元数据…", {"keywords": terms})
+                try:
+                    search = self.search_literature(project_id, terms)
+                    records = list(getattr(search, "records", []) or [])
+                    result["search_status"] = str(getattr(search, "status", "LITERATURE_SEARCHED"))
+                    search_audit = {
+                        "status": result["search_status"], "query": getattr(search, "query", " ".join(terms)),
+                        "record_count": len(records), "records": self._record_summaries(records, limit=12),
+                        "error": getattr(search, "error", None),
+                        "source_status": dict(getattr(search, "source_status", {}) or {}),
+                    }
+                    stage_status = "PARTIAL" if result["search_status"] == "SEARCH_PARTIAL" else "COMPLETED"
+                    self._finish_stage(run_id, output_dir, "SEARCH", stage_status, error=search_audit.get("error"))
+                except Exception as error:
+                    result["search_status"] = "SEARCH_PARTIAL"
+                    search_audit = {"status": "SEARCH_PARTIAL", "keywords": terms, "error": str(error)}
+                    result["errors"].append("Search: {}".format(error))
+                    self._finish_stage(run_id, output_dir, "SEARCH", "FAILED", error=str(error))
+        else:
+            self._skip_stage(run_id, output_dir, "SEARCH", "Online search disabled or no keywords supplied.")
+
+        if stop_if_cancelled(1):
+            return result
+        if pdf_path:
+            if self._start_stage(run_id, output_dir, "PDF", {"source_name": Path(pdf_path).name}):
+                emit("PDF", "正在校验并逐页读取本地 PDF…", {"file": Path(pdf_path).name})
+                try:
+                    document = self.learn_local_pdf(project_id, pdf_path)
+                    result["document"] = document
+                    pdf_audit = {"status": "COMPLETED", "source_id": document.source_id}
+                    self._finish_stage(run_id, output_dir, "PDF", "COMPLETED")
+                except Exception as error:
+                    pdf_audit = {"status": "FAILED", "error": str(error)}
+                    result["errors"].append("PDF: {}".format(error))
+                    self._finish_stage(run_id, output_dir, "PDF", "FAILED", error=str(error))
+            elif result["document"] is None:
+                try:
+                    document = self.learn_local_pdf(project_id, pdf_path)
+                    result["document"] = document
+                except Exception:
+                    document = None
+        else:
+            self._skip_stage(run_id, output_dir, "PDF", "No PDF supplied.")
+
+        if stop_if_cancelled(2):
+            return result
+        if document is not None and use_codex_candidates and self.was_new_source(document.source_id):
+            if self._start_stage(run_id, output_dir, "CODEX_PDF", {"source_id": document.source_id}):
+                try:
+                    pdf_thread_id, claims, rejected = self.extract_pdf_candidates(project_id, document.source_id)
+                    result["raw_candidate_count"] = len(claims)
+                    result["candidate_rejections"] = rejected
+                    pdf_audit.update({"codex_status": "COMPLETED", "raw_candidate_count": len(claims), "rejected_count": len(rejected)})
+                    self._finish_stage(run_id, output_dir, "CODEX_PDF", "COMPLETED")
+                except Exception as error:
+                    result["errors"].append("Codex PDF: {}".format(error))
+                    self._finish_stage(run_id, output_dir, "CODEX_PDF", "FAILED", error=str(error))
+        else:
+            reason = "Codex PDF extraction disabled, PDF unavailable, or source hash already processed."
+            self._skip_stage(run_id, output_dir, "CODEX_PDF", reason)
+
+        if stop_if_cancelled(3):
+            return result
+        run: ExperimentRun
+        if self._start_stage(run_id, output_dir, "DATA", {"source_name": Path(data_path).name if isinstance(data_path, (str, Path)) else "structured-input", "analysis_type": method}):
+            emit("DATA", "正在执行确定性实验分析…", {"analysis_type": method})
+            try:
+                run = self.analyze_data(project_id, data_path, conditions, method, _run_id=run_id)
+                self._finish_stage(run_id, output_dir, "DATA", "COMPLETED", artifacts=["analysis.json"])
+            except Exception as error:
+                result["errors"].append("Data: {}".format(error))
+                self._finish_stage(run_id, output_dir, "DATA", "FAILED", error=str(error))
+                for remaining in stages[4:]:
+                    self._skip_stage(run_id, output_dir, remaining, "Core data analysis failed.")
+                self.store.update_run_status(run_id, "FAILED")
+                self._update_manifest(output_dir, status="FAILED", errors=result["errors"])
+                return result
+        else:
+            legacy_status = "DATA_ANALYZED" if self.store.list_approved_claims(project_id) else "NEEDS_REVIEW"
+            run = ExperimentRun(run_id, project_id, raw_hash, legacy_status, output_dir)
+        result["run"] = run
+        analysis_envelope = json.loads((output_dir / "analysis.json").read_text(encoding="utf-8"))
+        self._record_codex_activity(output_dir, "RUN", "STARTED", "本轮 Codex 可观测记录已启用", {
+            "keywords": terms, "search": search_audit, "pdf": pdf_audit,
+            "data_source_sha256": raw_hash, "analysis_type": method,
+        })
+
+        if stop_if_cancelled(4):
+            return result
+        if use_online_research:
+            if self._start_stage(run_id, output_dir, "BENCHMARK_RESEARCH", {"keywords": terms, "analysis_type": method}):
+                emit("BENCHMARK_RESEARCH", "正在执行方法匹配的基准文献研究…", {"analysis_type": method})
+                try:
+                    benchmark = self.research_benchmarks(project_id, run_id, terms)
+                    self._finish_stage(run_id, output_dir, "BENCHMARK_RESEARCH", "COMPLETED", artifacts=["benchmark_research.json"])
+                except Exception as error:
+                    result["errors"].append("Benchmark research: {}".format(error))
+                    self._record_codex_activity(output_dir, "CODEX_WEB_SEARCH", "FAILED", "联网检索失败", {
+                        "error": str(error), "topics": build_benchmark_topics(" ".join(terms), analysis_envelope["analysis"], method),
+                    })
+                    self._finish_stage(run_id, output_dir, "BENCHMARK_RESEARCH", "FAILED", error=str(error))
+            else:
+                benchmark_path = output_dir / "benchmark_research.json"
+                benchmark = json.loads(benchmark_path.read_text(encoding="utf-8")) if benchmark_path.is_file() else {}
+        else:
+            self._skip_stage(run_id, output_dir, "BENCHMARK_RESEARCH", "Online benchmark research disabled.")
+
+        if stop_if_cancelled(5):
+            return result
+        if use_codex_candidates or use_online_research:
+            if self._start_stage(run_id, output_dir, "CODEX_KNOWLEDGE"):
+                emit("CODEX_KNOWLEDGE", "Codex 正在筛选待审批知识…", {})
+                try:
+                    review = self.curate_literature(project_id, run_id, benchmark.get("codex_web_research") or {}, pdf_thread_id)
+                    result["knowledge_review"] = review
+                    result["candidate_count"] = len(review.get("claims") or [])
+                    stage_status = "SKIPPED" if review.get("status") == "NO_REVIEW_ITEMS" else "COMPLETED"
+                    artifacts = ["literature_review.json"] if (output_dir / "literature_review.json").is_file() else []
+                    self._finish_stage(run_id, output_dir, "CODEX_KNOWLEDGE", stage_status, artifacts=artifacts)
+                except Exception as error:
+                    result["errors"].append("Literature synthesis: {}".format(error))
+                    self._finish_stage(run_id, output_dir, "CODEX_KNOWLEDGE", "FAILED", error=str(error))
+        else:
+            self._skip_stage(run_id, output_dir, "CODEX_KNOWLEDGE", "Codex knowledge curation disabled.")
+
+        if stop_if_cancelled(6):
+            return result
+        if self._start_stage(run_id, output_dir, "ORIGIN", {"analysis_type": method}):
+            emit("ORIGIN", "正在处理方法对应的 Origin 阶段…", {"analysis_type": method, "run_id": run_id})
+            try:
+                origin = self.prepare_origin(project_id, run_id, data_path)
+                result["origin"] = origin
+                origin_stage = "SKIPPED" if origin.status == "PLOT_NOT_AVAILABLE_FOR_METHOD" else "PARTIAL" if origin.status == "PLOT_BLOCKED" else "COMPLETED"
+                self._finish_stage(run_id, output_dir, "ORIGIN", origin_stage, error=origin.reason, artifacts=["origin/origin_manifest.json"])
+            except Exception as error:
+                result["errors"].append("Origin: {}".format(error))
+                self._finish_stage(run_id, output_dir, "ORIGIN", "FAILED", error=str(error))
+        else:
+            origin_path = output_dir / "origin" / "origin_manifest.json"
+            if origin_path.is_file():
+                payload = json.loads(origin_path.read_text(encoding="utf-8"))
+                result["origin"] = OriginPlotResult(payload.get("status"), origin_path, output_dir / "origin" / "electrochemistry.opju", tuple(), payload.get("reason"))
+
+        if stop_if_cancelled(7):
+            return result
+        if use_codex_assessment:
+            if self._start_stage(run_id, output_dir, "CODEX_ASSESSMENT"):
+                emit("CODEX_ASSESSMENT", "Codex 正在执行受控评估…", {"run_id": run_id})
+                try:
+                    _thread_id, guidance = self.evaluate_with_codex(project_id, run_id)
+                    result["guidance"] = guidance
+                    self._finish_stage(run_id, output_dir, "CODEX_ASSESSMENT", "COMPLETED", artifacts=["guidance.json"])
+                except Exception as error:
+                    result["errors"].append("Codex assessment: {}".format(error))
+                    self._finish_stage(run_id, output_dir, "CODEX_ASSESSMENT", "FAILED", error=str(error))
+        else:
+            self._skip_stage(run_id, output_dir, "CODEX_ASSESSMENT", "Codex assessment disabled.")
+
+        if stop_if_cancelled(8):
+            return result
+        if self._start_stage(run_id, output_dir, "REPORT"):
+            emit("REPORT", "正在生成图文报告…", {"run_id": run_id})
+            try:
+                result["report"] = self.build_report(project_id, run_id)
+                self._finish_stage(run_id, output_dir, "REPORT", "COMPLETED", artifacts=["research_decision_report.html"])
+            except Exception as error:
+                result["errors"].append("Report: {}".format(error))
+                self._finish_stage(run_id, output_dir, "REPORT", "FAILED", error=str(error))
+        else:
+            report_path = output_dir / "research_decision_report.html"
+            result["report"] = report_path if report_path.is_file() else None
+
+        if cancelled():
+            self.store.update_run_status(run_id, "CANCELLED")
+            self._update_manifest(output_dir, status="CANCELLED")
+            return result
+
+        statuses = {row["stage"]: row["status"] for row in self.store.list_run_stages(run_id)}
+        if any(value == "CANCELLED" for value in statuses.values()):
+            final_status = "CANCELLED"
+        elif statuses.get("DATA") == "FAILED":
+            final_status = "FAILED"
+        elif any(value in {"FAILED", "PARTIAL"} for value in statuses.values()):
+            final_status = "PARTIAL"
+        else:
+            final_status = "COMPLETED"
+        self.store.update_run_status(run_id, final_status)
+        self._update_manifest(output_dir, status=final_status, errors=result["errors"], stage_statuses=statuses)
+        return result
+
+    def resume_run(
+        self,
+        project_id: str,
+        run_id: str,
+        data_path: Any,
+        conditions: dict | None = None,
+        **kwargs: Any,
+    ) -> dict:
+        """Resume a run after validating caller-supplied source data by hash."""
+        run = self.store.get_run(run_id)
+        if run["project_id"] != project_id:
+            raise ValueError("Run does not belong to this project.")
+        if self._source_sha256(data_path) != run["raw_data_sha256"]:
+            raise ValueError("Selected data no longer matches the run raw-data hash.")
+        manifest_path = self.output_root / project_id / "runs" / run_id / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+        stored_conditions = dict(run["input_conditions"])
+        if conditions is not None and dict(conditions) != stored_conditions:
+            raise ValueError("A resumed run must use its original experiment conditions; create a new run for changed conditions.")
+        stored_method = str(manifest.get("analysis_type") or "gcd").strip().casefold()
+        requested_method = str(kwargs.get("analysis_type") or stored_method).strip().casefold()
+        if requested_method != stored_method:
+            raise ValueError("A resumed run must use its original analysis_type; create a new run for another method.")
+        kwargs["analysis_type"] = stored_method
+        return self.run_all(
+            project_id, data_path, stored_conditions,
+            _resume_run_id=run_id, **kwargs,
+        )
+
     @staticmethod
     def _derive_literature_studies(claims: list) -> list[dict]:
+        """Expose only researcher-approved, source-linked study details.
+
+        This fallback never invents material names, tests, or recommendations.
+        It renders fields already stored with an approved curated claim.
+        """
         studies = []
-        seen = set()
         for claim in claims:
-            text = str(getattr(claim, "text", ""))
-            lowered = text.casefold()
-            if any(token in lowered for token in ("xanes", "hrtem", "selected-area electron diffraction", "pair distribution")):
-                key = "structure_and_interface_characterization"
-                if key not in seen:
-                    studies.append({
-                        "study": "固态电解质结构与界面表征",
-                        "tests": ["SAED", "HRTEM", "PDF/rPDF", "Zr K-edge XANES"],
-                        "question": "这些测试用于区分局域结构、非晶/纳米晶特征以及循环或环境处理后的局域化学变化。",
-                        "finding": "当前已批准文献方法条目确认了这组表征被用于该类固态电解质研究；具体数值结果仍应回到原文图表核对。",
-                        "how_to_borrow": "对 P₂O₅–LiTaCl₆ 体系优先设计循环前后和环境处理前后的 XPS/XANES；若需要局域结构证据，再补充 HRTEM/SAED 或 PDF 分析，并把状态与电化学容量段绑定。",
-                        "source_urls": [], "source_ids": [getattr(claim, "source_id", "")], "evidence_status": "approved_local_pdf",
-                    })
-                    seen.add(key)
-            if "dry-room" in lowered or "dew point" in lowered:
-                key = "dry_room_stability"
-                if key not in seen:
-                    studies.append({
-                        "study": "干燥空气/湿度稳定性",
-                        "tests": ["受控露点暴露", "暴露前后电化学曲线", "界面/局域化学表征"],
-                        "question": "环境暴露是否改变固态电解质、界面极化或后续电池性能。",
-                        "finding": "已批准文献方法条目确认了受控露点暴露与复合正极测试设计；环境暴露后的具体性能变化应以原文结果页核对。",
-                        "how_to_borrow": "为 LiTaCl₆ 设定露点、暴露时间、样品封装和对照组；比较暴露前后极化、平均放电电压、容量保持率，并用 XPS/XANES 定位界面变化。",
-                        "source_urls": [], "source_ids": [getattr(claim, "source_id", "")], "evidence_status": "approved_local_pdf",
-                    })
-                    seen.add(key)
+            conditions = dict(getattr(claim, "conditions", {}) or {})
+            tests = [str(value).strip() for value in conditions.get("tests") or [] if str(value).strip()]
+            question = str(conditions.get("question") or "").strip()
+            finding = str(conditions.get("finding") or "").strip()
+            how_to_borrow = str(conditions.get("how_to_borrow") or "").strip()
+            if not tests or not question or not finding or not how_to_borrow:
+                continue
+            studies.append({
+                "study": str(conditions.get("title") or getattr(claim, "text", "已批准文献方法")).strip(),
+                "tests": tests,
+                "question": question,
+                "finding": finding,
+                "how_to_borrow": how_to_borrow,
+                "source_urls": [
+                    str(value).strip()
+                    for value in conditions.get("source_urls") or []
+                    if str(value).strip()
+                ],
+                "source_ids": [str(getattr(claim, "source_id", ""))],
+                "evidence_status": "approved",
+            })
         return studies
 
     def build_report(self, project_id: str, run_id: str) -> Path:
@@ -729,7 +1485,7 @@ class ResearchWorkflow:
         analysis = {}
         analysis_path = output_dir / "analysis.json"
         if analysis_path.is_file():
-            analysis = (json.loads(analysis_path.read_text(encoding="utf-8")) or {}).get("analysis") or {}
+            analysis = json.loads(analysis_path.read_text(encoding="utf-8")) or {}
         benchmark = {}
         benchmark_path = output_dir / "benchmark_research.json"
         if benchmark_path.is_file():

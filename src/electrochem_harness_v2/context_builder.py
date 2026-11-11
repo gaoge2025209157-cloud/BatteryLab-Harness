@@ -14,6 +14,7 @@ import math
 from pathlib import Path
 import re
 from typing import Any, Iterable, Mapping
+import uuid
 
 
 DEFAULT_SYSTEM_RULES = (
@@ -35,7 +36,24 @@ SENSITIVE_KEY_PARTS = (
     "refresh_token",
     "credential",
 )
-RAW_DATA_KEYS = frozenset({"rows", "points", "raw_rows", "raw_points", "point_level_data"})
+SENSITIVE_NORMALIZED_KEYS = frozenset({
+    "apikey",
+    "apitoken",
+    "accesstoken",
+    "refreshtoken",
+    "bearertoken",
+    "idtoken",
+    "token",
+    "password",
+    "cookie",
+    "authorization",
+    "credential",
+    "clientsecret",
+})
+RAW_DATA_KEYS = frozenset({
+    "rows", "points", "series", "normalized_points", "raw_rows", "raw_points",
+    "raw_series", "point_level_data", "data_points", "measurements",
+})
 APPLICABILITY_KEYS = frozenset({
     "material_system",
     "battery_system",
@@ -109,7 +127,8 @@ def estimate_tokens(value: Any) -> int:
 
 def _is_sensitive_key(key: str) -> bool:
     lowered = key.casefold()
-    return any(part in lowered for part in SENSITIVE_KEY_PARTS)
+    normalized = re.sub(r"[^a-z0-9]", "", lowered)
+    return normalized in SENSITIVE_NORMALIZED_KEYS or any(part in lowered for part in SENSITIVE_KEY_PARTS)
 
 
 def _looks_absolute_path(value: str) -> bool:
@@ -278,7 +297,10 @@ def _compact_online_research(payload: Mapping[str, Any]) -> dict[str, Any]:
             continue
         sources.append(model_safe({
             key: row.get(key)
-            for key in ("title", "url", "doi", "source_type", "source_level", "specific_claims", "limitations")
+            for key in (
+                "title", "url", "doi", "source_type", "source_level", "evidence_level",
+                "specific_claims", "claims", "limitations",
+            )
             if row.get(key) not in (None, "", [], {})
         }))
     digest = []
@@ -494,8 +516,10 @@ class ContextBuilder:
                 "Final v2 context requires {} estimated tokens, above limit {}".format(estimated, self.max_input_tokens)
             )
         context_hash = stable_hash(bundle)
+        record_id = "ctxrec-" + uuid.uuid4().hex
         manifest = {
             "schema_version": "2.0",
+            "record_id": record_id,
             "context_id": context_id,
             "created_at": utc_now(),
             "stage": clean_stage,

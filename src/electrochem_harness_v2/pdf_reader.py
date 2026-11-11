@@ -33,6 +33,10 @@ class LocalPdfReader:
         if not raw.startswith(b"%PDF"):
             raise ValueError("Selected file is not a PDF: {}".format(source.name))
         digest = hashlib.sha256(raw).hexdigest()
+        project_source_hash = hashlib.sha256(
+            "{}:{}".format(project_id, digest).encode("utf-8")
+        ).hexdigest()
+        source_id = "source-" + project_source_hash[:24]
         try:
             pdf = pymupdf.open(source)
         except Exception as error:
@@ -63,8 +67,8 @@ class LocalPdfReader:
                     text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
                     spans.append(
                         SourceSpan(
-                            span_id="span-{}-{:04d}-{:04d}".format(digest[:16], page_number, block_number),
-                            source_id="source-" + digest[:24],
+                            span_id="span-{}-{:04d}-{:04d}".format(project_source_hash[:16], page_number, block_number),
+                            source_id=source_id,
                             page_index=page_number,
                             page_label=page_label,
                             block_type=block_type,
@@ -76,7 +80,7 @@ class LocalPdfReader:
                     )
             extraction_status = "complete" if len(text_pages) == len(pdf) else "partial"
             document = SourceDocument(
-                source_id="source-" + digest[:24],
+                source_id=source_id,
                 project_id=project_id,
                 sha256=digest,
                 original_name=source.name,

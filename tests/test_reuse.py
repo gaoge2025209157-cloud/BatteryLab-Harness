@@ -27,5 +27,26 @@ class ReuseTests(unittest.TestCase):
             self.assertFalse(workflow.was_new_source(second.source_id))
 
 
+    def test_same_pdf_can_be_linked_to_two_projects_without_id_collision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pdf_path = root / "shared.pdf"
+            pdf = pymupdf.open()
+            pdf.new_page().insert_text((72, 72), "Shared paper")
+            pdf.save(pdf_path)
+            pdf.close()
+            workflow = ResearchWorkflow(root / "research.sqlite3", root / "outputs")
+            first_project = workflow.create_project("First", "A", ["A"])
+            second_project = workflow.create_project("Second", "B", ["B"])
+
+            first = workflow.learn_local_pdf(first_project, pdf_path)
+            second = workflow.learn_local_pdf(second_project, pdf_path)
+
+            self.assertNotEqual(first.source_id, second.source_id)
+            self.assertEqual(first.sha256, second.sha256)
+            self.assertIsNotNone(workflow.store.find_source(first_project, first.sha256))
+            self.assertIsNotNone(workflow.store.find_source(second_project, second.sha256))
+
+
 if __name__ == "__main__":
     unittest.main()

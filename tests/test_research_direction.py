@@ -21,9 +21,11 @@ class ResearchDirectionTests(unittest.TestCase):
         })
         self.assertIn("仪器步骤", direction["headline"])
         self.assertTrue(any("48.80%" in item for item in direction["observations"]))
-        self.assertTrue(any("极化" in item for item in direction["risks"]))
+        self.assertTrue(any("极化" in item for item in direction["observations"]))
+        self.assertFalse(any("LiTaCl" in item or "P₂O₅" in item for item in direction["risks"]))
         self.assertEqual(direction["actions"][0]["priority"], "P0｜核对仪器步骤与分段")
-        self.assertIn("XPS", direction["actions"][3]["decision_evidence"])
+        self.assertIn("材料组成", direction["actions"][3]["decision_evidence"])
+        self.assertNotIn("P、O、Ta、Cl", direction["actions"][3]["decision_evidence"])
 
     def test_uses_entered_active_material_mass_without_default_mass_warning(self):
         direction = build_research_direction({
@@ -36,6 +38,15 @@ class ResearchDirectionTests(unittest.TestCase):
         self.assertIn("不构成反应机理证明", direction["scope"])
         self.assertNotIn("mAh", direction["headline"])
         self.assertEqual(len(direction["actions"]), 4)
+
+    def test_large_capacity_does_not_trigger_a_fixed_material_reference(self):
+        direction = build_research_direction({
+            "gcd_summary": {"first_complete_discharge_capacity_mAh_g": 2000.0},
+        })
+        joined = " ".join(direction["observations"] + direction["risks"])
+        self.assertNotIn("1675", joined)
+        self.assertNotIn("优越", joined)
+        self.assertNotIn("LiTaCl", joined)
 
 
 if __name__ == "__main__":

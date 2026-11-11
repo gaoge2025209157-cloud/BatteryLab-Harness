@@ -1,3 +1,10 @@
 @echo off
 setlocal
-"%~dp0.venv\Scripts\python.exe" "%~dp0run_gui.py"
+cd /d "%~dp0"
+if not exist ".venv\Scripts\python.exe" (
+  echo [ERROR] The project environment is missing.
+  echo Run setup_env.cmd first.
+  pause
+  exit /b 1
+)
+".venv\Scripts\python.exe" "run_gui.py"

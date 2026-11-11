@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "electrochem-harness-v2"
 version = "1.0.0"
@@ -10,3 +14,6 @@ dependencies = [
 
 [tool.unittest]
 start-directory = "tests"
+
+[tool.setuptools.packages.find]
+where = ["src"]

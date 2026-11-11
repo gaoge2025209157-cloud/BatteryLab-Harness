@@ -33,7 +33,8 @@ class AutomatedWorkflowTests(unittest.TestCase):
                 progress=lambda stage, message, details: events.append((stage, message, details)),
             )
             self.assertTrue(result["report"].is_file())
-            self.assertIn("SEARCH", [item[0] for item in events])
+            self.assertNotIn("SEARCH", [item[0] for item in events])
+            self.assertEqual(result["search_status"], "SKIPPED")
             self.assertIn("PDF", [item[0] for item in events])
             self.assertIn("DATA", [item[0] for item in events])
             self.assertIn("ORIGIN", [item[0] for item in events])

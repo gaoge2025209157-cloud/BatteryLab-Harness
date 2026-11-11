@@ -6,7 +6,11 @@ ElectrochemHarness v2 将**课题建档、受控文献学习、实验数据确�
 
 ## 1. 适用场景
 
-- 处理恒流充放电（GCD）实验数据，快速获得容量、电压、极化、库仑效率和循环保持率。
+- 处理恒流充放电（GCD）数据，计算容量、电压、极化、效率、保持率和独立电流积分容量。
+- 处理循环伏安（CV）数据，提取扫描方向、候选峰和峰间距；仅在给定扫描速率时积分电荷。
+- 处理阻抗谱（EIS）数据，提取实测截距候选、`−Z″` 峰和低频尾部斜率，不自动拟合等效电路。
+- 处理 GITT 数据，识别脉冲和静置并计算电压变化；缺少模型参数时不计算扩散系数。
+- 汇总同方法、同指标、同单位的重复运行，给出描述统计，不自动作显著性结论。
 - 将原始实验曲线、可选本地 PDF 和联网文献线索汇入同一条可追溯研究链路。
 - 使用 Origin 生成正式 PNG 图与可编辑 `.opju` 工程。
 - 让 Codex 基于**受限的结构化特征**、来源信息与研究条件，提出竞争解释、证据边界与下一轮判别实验。
@@ -24,9 +28,13 @@ ElectrochemHarness v2 将**课题建档、受控文献学习、实验数据确�
 | 实验输入 | 填写实验条件与活性物质质量（mg），选择数据与可选 PDF | 可审计的输入条件 |
 | 本地 PDF 学习 | 使用 PyMuPDF 按页提取文本片段、页码与覆盖信息 | 本地来源与证据片段 |
 | 文献检索 | Crossref、OpenAlex 提供题录线索；Codex 联网检索补充学术来源与主流体系 | 检索主题、来源、研究缺口 |
-| GCD 数据分析 | 编码与列识别、容量重置分段、完整循环配对、异常审计 | 可复算的结构化指标 |
-| 电化学指标 | 放电比容量、容量加权平均放电电压、平均充电电压、极化、库仑效率、容量保持率和峰值趋势 | `analysis.json` |
-| Origin 作图 | 调用已验证的 Origin 作图引擎 | 正式 PNG 与可编辑 `.opju` |
+| GCD 数据分析 | 单位规范、显式步骤/电流/容量重置分段、人工审核、独立电流积分和异常审计 | 可复算的结构化指标 |
+| CV 数据分析 | 扫描方向、氧化/还原候选峰、峰间距和有条件电荷积分 | 受限 CV 描述量 |
+| EIS 数据分析 | 频率排序、高频截距候选、`−Z″` 峰和低频尾部斜率 | 受限 EIS 描述量 |
+| GITT 数据分析 | 电流阈值分段、脉冲/静置时长和电压变化 | 受限 GITT 描述量 |
+| 重复统计 | 同方法、同指标、同单位的均值、样本标准差和变异系数 | 独立统计报告 |
+| 运行控制 | 阶段状态、协作取消、哈希校验恢复和失败重试 | 可恢复运行档案 |
+| Origin 作图 | GCD 调用已验证的 Origin 引擎；其他方法明确记录为未提供模板 | GCD PNG 与可编辑 `.opju` |
 | Codex 课题评估 | 基于特征包、Origin 状态、研究条件与可追溯来源输出解释和实验路线 | `guidance.json` |
 | 中文报告 | 汇总数据事实、课题阶段、文献学习、结论边界和下一步实验 | `research_decision_report.html` |
 | 知识积累 | 缓存同主题研究、保存来源、页码证据、候选知识与运行产物 | 本地 SQLite 知识库 |
@@ -36,40 +44,39 @@ ElectrochemHarness v2 将**课题建档、受控文献学习、实验数据确�
 ## 3. 工作流程
 
 ```text
-研究者填写课题、条件、质量口径，选择数据和可选 PDF
+研究者选择 GCD / CV / EIS / GITT，填写条件和可选 PDF
                          │
                          ▼
-本地文件哈希 ──► PDF 按页提取 ──► 题录检索（Crossref / OpenAlex）
+本地文件哈希 ──► PDF 按页提取 ──► 可选题录检索
                          │
                          ▼
-原始 GCD CSV / TXT / TSV / DAT
+方法路由 → 单位与有限数检查 → 确定性特征 → 质量标志
+                         │
+             ┌───────────┴───────────┐
+             ▼                       ▼
+       GCD Origin 作图          非 GCD 明确跳过
+             │                       │
+             └───────────┬───────────┘
+                         ▼
+可选 Codex：受控上下文 → 候选解释 → 判别实验
                          │
                          ▼
-确定性分析：列识别 → 分段 → 充放电配对 → 指标计算 → 异常审计
-                         │
-                         ├──► Origin：正式图 PNG + 可编辑 .opju
-                         │
-                         ▼
-有限特征包：汇总指标 + 循环特征 + 质量标志 + 实验条件
-                         │
-                         ▼
-Codex：联网学习 → 文献提炼 → 竞争解释 → 反证 → 判别实验设计
-                         │
-                         ▼
-中文 HTML 图文科研决策报告 + 本地可追溯运行档案
+中文报告 + 阶段状态 + 不可覆盖审计 + 可恢复运行
 ```
 
 ### 3.1 单击自动流程的执行顺序
 
 单击 GUI 中的 **“自动执行课题全流程”** 后，程序依次执行：
 
-1. 创建或恢复课题，并为原始数据计算 SHA-256。
-2. 按关键词检索题录元数据；若提供 PDF，则在本地逐页提取证据片段。
-3. 解析原始实验数据，识别充放电段与完整循环，计算 GCD 指标并记录异常。
-4. 按已出现的性能指标生成检索主题，调用 Codex 进行受控联网研究与知识提炼。
-5. 生成 Origin 输入表，调用 Origin 导出正式曲线图与 `.opju` 工程。
-6. 将**有限的特征包**交给 Codex，生成数据解释、不能判断项、反证和下一轮单变量实验建议。
-7. 生成中文 HTML 图文报告，并保存本轮所有可追溯产物。
+1. 创建运行记录，并为原始数据计算 SHA-256。
+2. 按权限开关检索题录；若提供 PDF，则在本地逐页提取证据片段。
+3. 按所选方法执行 GCD、CV、EIS 或 GITT 确定性分析。
+4. GCD 可独立积分电流，并允许研究者审核候选分段。
+5. 按实际方法和指标生成检索主题，调用可选联网研究。
+6. GCD 调用 Origin；其他方法明确记录 `PLOT_NOT_AVAILABLE_FOR_METHOD`。
+7. 将有限特征包交给 Codex，生成候选解释和单变量实验建议。
+8. 生成中文 HTML 报告，并保存全部阶段状态和调用审计。
+9. 取消后保留现有产物；恢复时校验数据哈希并重跑未完成阶段。
 
 PDF、联网检索、Codex 评估任何一项失败时，已完成的本地分析不会被覆盖；报告仍会保留确定性数据结论与错误边界。
 
@@ -89,17 +96,15 @@ PDF、联网检索、Codex 评估任何一项失败时，已完成的本地分�
 - `openai-codex==0.167.0`
 - `PyMuPDF==1.28.2`
 
-### 4.2 在 D 盘创建隔离环境
+### 4.2 创建隔离环境
 
-在 Windows PowerShell 中执行：
+双击：
 
-```powershell
-cd D:\AI\Harness-v2
-py -3 -m venv D:\AI\Harness-v2\.venv
-$env:PIP_CACHE_DIR = "D:\AI\Harness-v2\.pip-cache"
-& "D:\AI\Harness-v2\.venv\Scripts\python.exe" -m pip install --upgrade pip
-& "D:\AI\Harness-v2\.venv\Scripts\python.exe" -m pip install "openai-codex==0.167.0" "PyMuPDF==1.28.2"
+```text
+setup_env.cmd
 ```
+
+该脚本创建项目内 `.venv`，再安装当前项目和锁定依赖。若系统没有标准 Windows CPython，脚本会停止并显示错误，不会改用不带 Tk 的运行时。
 
 ### 4.3 配置 Origin
 
@@ -124,25 +129,29 @@ Codex 的服务端地址、模型或代理配置属于本机凭据与运行环�
 双击：
 
 ```text
-D:\AI\Harness-v2\start_gui.cmd
+start_gui.cmd
 ```
 
-也可以在 PowerShell 中运行：
+也可以在项目目录运行：
 
 ```powershell
-cd D:\AI\Harness-v2
 & ".\.venv\Scripts\python.exe" ".\run_gui.py"
 ```
 
 ### 5.2 一次完整实验运行
 
-1. 填写**课题名称**、**课题类型（材料体系）**和**关键词**，关键词以分号分隔。
-2. 填写实验条件，格式为 `key=value`，多项以分号分隔。例如：`temperature_C=60；current_mA=0.1；pressure_MPa=300`。
-3. 填写**活性物质质量（mg）**。该值用于明确容量归一化与理论量的解释边界。
-4. 选择 GCD 数据文件。支持 `.csv`、`.txt`、`.tsv`、`.dat`。
-5. 按需选择本地 PDF。PDF 是可选输入，原文件仅在本地读取。
-6. 单击**“自动执行课题全流程”**。
-7. 运行结束后，浏览器会打开图文报告；也可使用 GUI 的**“打开最近图文报告”**或**“打开 Codex 工作记录”**按钮查看结果。
+1. 填写课题名称、材料体系和关键词。
+2. 选择 `gcd`、`cv`、`eis` 或 `gitt`。
+3. 填写方法条件。CV 的 `scan_rate` 可选；EIS 的 `tail_fraction` 默认 0.3；GITT 必须填写 `current_threshold_A`。
+4. GCD 可登记活性物质质量，用于独立电流积分。
+5. 选择实验数据和可选 PDF。
+6. 分别选择 PDF 证据提取、联网研究和 Codex 课题评估。
+7. 单击**“自动执行课题全流程”**，并核对发送范围。
+8. 可用**“请求取消”**协作停止后续阶段。
+9. 从运行列表恢复失败、部分完成或取消的运行。
+10. GCD 可用**“审核 GCD 分段”**批准方向或驳回分段。
+11. 使用**“重复统计”**汇总同方法、同指标、同单位的运行。
+12. 使用知识审核和研究状态入口保存人工决定。
 
 ### 5.3 打开和修改已保存课题
 
@@ -157,7 +166,7 @@ cd D:\AI\Harness-v2
 
 ### 6.1 Codex 输入边界
 
-在 `gcd_metrics.py` 完成本地数据处理后，`build_codex_feature_packet()` 才会构造模型输入。该输入可包含来源哈希、汇总指标、完整循环特征、候选段特征、质量标志与实验条件。
+确定性分析完成后，`build_analysis_feature_packet()` 才会构造模型输入。GCD 使用汇总指标、循环特征、候选段和质量标志；CV、EIS 与 GITT 使用各自的聚合描述量。
 
 下列内容不会发送给 Codex：
 
@@ -184,7 +193,9 @@ v2 在每个 Codex 阶段前通过 `ContextBuilder` 组装受控上下文。上�
 - `rejected` 知识和明确不匹配当前实验条件的证据不会进入模型；
 - 原始逐行 CSV、逐点时间序列、密钥、Cookie 与本机绝对路径不会进入模型；
 - 输入超过 Token 预算时优先排除低相关候选，不截断任务、实验条件和确定性事实；
-- 每次调用保存上下文包、来源清单、排除原因、Token 估算与上下文哈希；
+- 每次构建保存上下文包、来源清单、排除原因、Token 估算与上下文哈希；
+- 每次模型调用使用新的临时线程，不恢复未记录的旧对话；
+- 每次调用另存不可覆盖的调用记录，包含实际请求、规则、输出格式、模型与 SDK 身份、所选 PDF 片段、响应哈希和成败状态；
 - 数据、实验条件、知识状态、研究记忆或模型身份变化时，上下文哈希随之变化。
 
 Codex 生成的假设和下一轮实验建议会以候选研究状态保存。研究人员的确认、纠正和被排除假设由本地课题库保留，供下一轮数据分析继续使用；模型不能自行批准科学知识。
@@ -199,6 +210,8 @@ Codex 生成的假设和下一轮实验建议会以候选研究状态保存。�
 
 文献来源、质量分母、构型、温度、倍率/电流、压力、载量、电压窗口和循环定义不匹配时，只能作为研究背景或单指标情境参考，不能形成正式的综合性能优劣结论。
 
+报告只对 `approved` 且指标口径、单位、实验条件一致的数值声明生成正式高低比较。含糊的“放电容量”不会自动映射为首圈、最高值或末圈。材料名称不会自动触发反应式、固定容量基准或商用电池数据。
+
 ---
 
 ## 7. 每轮运行产物
@@ -207,22 +220,27 @@ Codex 生成的假设和下一轮实验建议会以候选研究状态保存。�
 
 ```text
 outputs/research_cockpit/<project_id>/runs/<run_id>/
-├─ analysis.json                    # 确定性数据、GCD 指标与异常审计
+├─ analysis.json                    # 方法统一封装、确定性指标与质量标志
+├─ segment_review.json              # GCD 人工分段审核历史（按需）
 ├─ benchmark_research.json          # 题录线索、Codex 联网研究和理论计算
 ├─ literature_review.json           # 文献学习结果、来源与研究缺口
 ├─ codex_activity.json              # Codex 阶段、检索主题、来源和判断摘要
 ├─ codex_input_manifest.json        # 模型输入边界及受控上下文入口
 ├─ contexts/
-│  ├─ online_research.bundle.json   # 联网研究阶段实际使用的上下文
-│  ├─ online_research.manifest.json # 纳入/排除来源、Token和哈希
-│  ├─ literature_synthesis.*.json   # 文献精选阶段的上下文与清单
-│  └─ codex_assessment.*.json       # 课题评估阶段的上下文与清单
+│  ├─ online_research.bundle.json   # 联网研究阶段最近一次受控上下文
+│  ├─ online_research.manifest.json # 最近一次纳入/排除来源、Token和哈希
+│  ├─ literature_synthesis.*.json   # 文献精选阶段的兼容入口
+│  ├─ codex_assessment.*.json       # 课题评估阶段的兼容入口
+│  └─ versions/                     # 每次构建的不可覆盖上下文版本
+├─ codex_invocations/               # 实际模型请求与响应哈希记录
 ├─ guidance.json                    # Codex结构化课题评估、上下文依据与实验建议
 ├─ figures/                         # Origin 正式导出图片
 ├─ origin/                          # Origin 工程与作图状态
 ├─ manifest.json                    # 本轮产物和状态清单
 └─ research_decision_report.html    # 中文图文科研决策报告
 ```
+
+重复统计写入 `outputs/research_cockpit/<project_id>/replicates/`。阶段当前状态和不可修改的事件历史保存在 SQLite。旧数据库迁移前会在同级 `backups/` 创建一次备份。
 
 `outputs/`、本地 SQLite 知识库、Origin 工程和本机配置均被 `.gitignore` 排除。默认上传源代码、测试、使用说明、示例配置和工具介绍；不上传原始实验数据、PDF、运行报告、数据库、Token 或本机 Origin 配置。
 
@@ -233,14 +251,13 @@ outputs/research_cockpit/<project_id>/runs/<run_id>/
 在项目根目录执行：
 
 ```powershell
-cd D:\AI\Harness-v2
 $env:PYTHONPATH = "$PWD\src"
 & ".\.venv\Scripts\python.exe" -m unittest discover -s tests -v
 ```
 
 > 当前 Windows 环境请使用 `discover -s tests`。不要使用 `python -m unittest tests.test_...`，该调用方式在本环境可能将 `tests` 解析错误。
 
-自动化测试覆盖 CSV 导入、GCD 指标、Codex 输入边界、统一上下文构建、知识状态筛选、Token预算、隐私脱敏、跨轮研究记忆、PDF 提取、文献检索、知识提炼、Origin 适配、报告生成、理论能量、缓存与一键工作流。
+自动化测试覆盖流式 CSV 导入、GCD 电流积分与分段、CV、EIS、GITT、重复统计、上下文边界、知识审核、阶段状态、取消恢复、数据库备份迁移、网络重试、缓存失效、Origin 适配和多方法报告。
 
 ---
 
@@ -254,6 +271,7 @@ Harness-v2/
 ├─ docs/                            # 设计稿与样式参考
 ├─ config.example.json              # Origin 本机配置模板
 ├─ run_gui.py                       # GUI 启动入口
+├─ setup_env.cmd                    # Windows 环境创建与安装
 ├─ start_gui.cmd                    # Windows 双击启动入口
 ├─ 工作流.md                         # 设计、门禁和可追溯原则
 ├─ 验收报告.md                       # 本地验收记录

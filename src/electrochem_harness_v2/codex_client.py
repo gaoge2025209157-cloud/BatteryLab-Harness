@@ -1,21 +1,64 @@
 """Least-privilege Codex SDK adapter for evidence-bounded candidate extraction."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
+from importlib.metadata import PackageNotFoundError, version as package_version
 import json
 import math
 from pathlib import Path
 import re
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
+import uuid
 from urllib.parse import urlparse
 
 from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox
 
+from .context_builder import model_safe, stable_hash
 from .models import KnowledgeClaim
 
 
 class CodexResearchError(RuntimeError):
     pass
+
+
+ADAPTER_VERSION = "1.1"
+PROMPT_VERSIONS = {
+    "pdf_candidate_extraction": "pdf-candidates-v1",
+    "literature_synthesis": "literature-synthesis-v1",
+    "codex_assessment": "project-assessment-v1",
+    "online_research": "online-research-v1",
+}
+DEVELOPER_INSTRUCTIONS = "Use only supplied evidence. Do not access files, network, or run commands."
+_WINDOWS_PATH_IN_TEXT = re.compile(r"(?i)(?<![A-Za-z0-9])(?:[A-Z]:[\\/])[^\s\"']+")
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)\b(api[_-]?key|api[_-]?token|access[_-]?token|refresh[_-]?token|bearer[_-]?token|password|cookie|authorization|secret)\s*[:=]\s*[^\s,;]+"
+)
+
+
+def _safe_error_text(error: Exception) -> str:
+    """Keep useful failure text without persisting paths or inline secrets."""
+    text = " ".join(str(error).split())
+    text = _WINDOWS_PATH_IN_TEXT.sub("<local-path>", text)
+    text = _SECRET_ASSIGNMENT.sub(lambda match: "{}=[REDACTED]".format(match.group(1)), text)
+    return text[:1200]
+
+
+def codex_model_identity(stage: str) -> dict[str, str]:
+    """Return explicit adapter identity without guessing the SDK-selected model."""
+    try:
+        sdk_version = package_version("openai-codex")
+    except PackageNotFoundError:
+        sdk_version = "unknown"
+    return {
+        "provider": "openai-codex",
+        "model": "sdk-default",
+        "sdk_package": "openai-codex",
+        "sdk_version": sdk_version,
+        "adapter": "CodexResearchClient",
+        "adapter_version": ADAPTER_VERSION,
+        "prompt_version": PROMPT_VERSIONS.get(stage, "unknown"),
+    }
 
 
 GUIDANCE_OUTPUT_SCHEMA = {
@@ -216,9 +259,121 @@ def _bounded_evidence(spans: Iterable, max_chars: int = 28000) -> list[dict]:
 class CodexResearchClient:
     """Uses the official Python SDK without granting file, shell, or network tool access."""
 
-    def __init__(self, cwd: str, client_factory=Codex):
+    def __init__(
+        self,
+        cwd: str,
+        client_factory=Codex,
+        invocation_recorder: Callable[[dict[str, Any]], None] | None = None,
+    ):
         self.cwd = cwd
         self.client_factory = client_factory
+        self.invocation_recorder = invocation_recorder
+
+    def _invoke(
+        self,
+        client,
+        *,
+        stage: str,
+        request_payload: Mapping[str, Any],
+        developer_instructions: str,
+        output_schema: Mapping[str, Any] | None = None,
+        selected_pdf_spans: list[dict[str, Any]] | None = None,
+        requested_thread_id: str | None = None,
+        processor: Callable[[str], Any] | None = None,
+    ) -> tuple[str, Any]:
+        """Run one isolated thread and emit exactly one immutable terminal audit record."""
+        safe_request = model_safe(dict(request_payload))
+        safe_schema = model_safe(dict(output_schema)) if output_schema is not None else None
+        model_identity = codex_model_identity(stage)
+        message = json.dumps(safe_request, ensure_ascii=False)
+        message_hash = hashlib.sha256(message.encode("utf-8")).hexdigest()
+        request_envelope = {
+            "local_request": safe_request,
+            "developer_instructions": str(developer_instructions),
+            "output_schema": safe_schema,
+            "model_identity": model_identity,
+            "thread_mode": "fresh",
+            "ephemeral": True,
+            "approval_mode": "deny_all",
+            "sandbox": "read_only",
+        }
+        invocation_id = "codexinv-" + uuid.uuid4().hex
+        started_at = datetime.now(timezone.utc).isoformat()
+        context = safe_request.get("managed_context") or safe_request.get("project_context") or {}
+        context_hash = stable_hash(context)
+        span_records = []
+        for span in selected_pdf_spans or []:
+            safe_span = model_safe(dict(span))
+            text = str(safe_span.get("text") or "")
+            span_records.append({
+                "span_id": safe_span.get("span_id"),
+                "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "text": text,
+                "page_index": safe_span.get("page_index"),
+                "page_label": safe_span.get("page_label"),
+            })
+        response_text: str | None = None
+        sdk_status: str | None = None
+        thread_id: str | None = None
+        record = {
+            "schema_version": "1.0",
+            "invocation_id": invocation_id,
+            "created_at": started_at,
+            "stage": stage,
+            "thread_mode": "fresh",
+            "ephemeral": True,
+            "requested_thread_id_ignored": bool(requested_thread_id),
+            "local_request": safe_request,
+            "developer_instructions": str(developer_instructions),
+            "output_schema": safe_schema,
+            "output_schema_hash": stable_hash(safe_schema) if safe_schema is not None else None,
+            "selected_pdf_spans": span_records,
+            "model_identity": model_identity,
+            "model_identity_hash": stable_hash(model_identity),
+            "context_hash": context_hash,
+            "message_hash": message_hash,
+            "request_hash": stable_hash(request_envelope),
+        }
+        try:
+            # Deliberately never resume caller-provided threads: hidden history is
+            # outside the managed context hash and therefore unauditable.
+            thread = client.thread_start(
+                approval_mode=ApprovalMode.deny_all,
+                sandbox=Sandbox.read_only,
+                developer_instructions=developer_instructions,
+                ephemeral=True,
+            )
+            thread_id = str(thread.id)
+            run_kwargs = {"output_schema": output_schema} if output_schema is not None else {}
+            result = thread.run(message, **run_kwargs)
+            sdk_status = str(result.status)
+            response_text = str(result.final_response) if result.final_response is not None else None
+            if "completed" not in sdk_status.casefold() or result.error or not response_text:
+                raise CodexResearchError("Codex {} failed: {}".format(stage, result.error or result.status))
+            processed = processor(response_text) if processor else response_text
+        except Exception as error:
+            record.update({
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "thread_id": thread_id,
+                "sdk_status": sdk_status,
+                "status": "FAILED",
+                "response_hash": hashlib.sha256(response_text.encode("utf-8")).hexdigest() if response_text is not None else None,
+                "error": _safe_error_text(error),
+            })
+            if self.invocation_recorder:
+                self.invocation_recorder(record)
+            raise
+        record.update({
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "thread_id": thread_id,
+            "sdk_status": sdk_status,
+            "status": "COMPLETED",
+            "response_hash": hashlib.sha256(response_text.encode("utf-8")).hexdigest(),
+            "error": None,
+        })
+        if self.invocation_recorder:
+            self.invocation_recorder(record)
+        return thread_id, processed
 
     def extract_candidates(self, project_context: Mapping[str, Any], source_id: str, spans: Iterable, thread_id: str | None = None) -> tuple[str, list[KnowledgeClaim], list[str]]:
         evidence = _bounded_evidence(spans)
@@ -234,20 +389,34 @@ class CodexResearchClient:
             "All natural-language fields must be written in simplified Chinese."
         )
         client = self.client_factory(CodexConfig(cwd=self.cwd))
+        request = {
+            "context_type": "local_pdf_evidence",
+            "instruction": prompt,
+            "managed_context": dict(project_context),
+            "source_id": source_id,
+            "evidence": evidence,
+        }
+
+        def process(response: str) -> tuple[list[KnowledgeClaim], list[str]]:
+            return candidate_payload_to_claims(
+                _project_id(project_context),
+                source_id,
+                {item["span_id"] for item in evidence},
+                _parse_json(response),
+            )
+
         try:
-            thread = client.thread_resume(thread_id, approval_mode=ApprovalMode.deny_all, sandbox=Sandbox.read_only) if thread_id else client.thread_start(
-                approval_mode=ApprovalMode.deny_all, sandbox=Sandbox.read_only,
-                developer_instructions="Use only supplied evidence. Do not access files, network, or run commands.", ephemeral=False,
+            returned_thread_id, processed = self._invoke(
+                client,
+                stage="pdf_candidate_extraction",
+                request_payload=request,
+                developer_instructions=DEVELOPER_INSTRUCTIONS,
+                selected_pdf_spans=evidence,
+                requested_thread_id=thread_id,
+                processor=process,
             )
-            message = json.dumps(
-                {"context_type": "local_pdf_evidence", "instruction": prompt, "managed_context": dict(project_context), "source_id": source_id, "evidence": evidence},
-                ensure_ascii=False,
-            )
-            result = thread.run(message)
-            if "completed" not in str(result.status).casefold() or result.error or not result.final_response:
-                raise CodexResearchError("Codex candidate extraction failed: {}".format(result.error or result.status))
-            claims, rejected = candidate_payload_to_claims(_project_id(project_context), source_id, {item["span_id"] for item in evidence}, _parse_json(result.final_response))
-            return thread.id, claims, rejected
+            claims, rejected = processed
+            return returned_thread_id, claims, rejected
         finally:
             client.close()
 
@@ -278,23 +447,32 @@ class CodexResearchClient:
             payload["local_pdf_candidates"] = candidates
             payload["codex_web_research"] = bounded_online
         client = self.client_factory(CodexConfig(cwd=self.cwd))
+        request = {"context_type": "literature_synthesis", **payload}
+
+        def process(response: str) -> tuple[dict, list[KnowledgeClaim], list[str]]:
+            parsed = _parse_json(response)
+            allowed_urls = {
+                str(row.get("url"))
+                for row in online.get("sources") or []
+                if isinstance(row, Mapping) and row.get("url")
+            }
+            claims, rejected = curated_payload_to_claims(
+                _project_id(project_context), candidate_claims, parsed, allowed_source_urls=allowed_urls
+            )
+            return parsed, claims, rejected
+
         try:
-            thread = client.thread_resume(thread_id, approval_mode=ApprovalMode.deny_all, sandbox=Sandbox.read_only) if thread_id else client.thread_start(
-                approval_mode=ApprovalMode.deny_all,
-                sandbox=Sandbox.read_only,
-                developer_instructions="Use only supplied evidence. Do not access files, network, or run commands.",
-                ephemeral=False,
-            )
-            result = thread.run(
-                json.dumps({"context_type": "literature_synthesis", **payload}, ensure_ascii=False),
+            returned_thread_id, processed = self._invoke(
+                client,
+                stage="literature_synthesis",
+                request_payload=request,
+                developer_instructions=DEVELOPER_INSTRUCTIONS,
                 output_schema=CURATED_KNOWLEDGE_SCHEMA,
+                requested_thread_id=thread_id,
+                processor=process,
             )
-            if "completed" not in str(result.status).casefold() or result.error or not result.final_response:
-                raise CodexResearchError("Codex literature synthesis failed: {}".format(result.error or result.status))
-            parsed = _parse_json(result.final_response)
-            allowed_urls = {str(row.get("url")) for row in online.get("sources") or [] if isinstance(row, Mapping) and row.get("url")}
-            claims, rejected = curated_payload_to_claims(_project_id(project_context), candidate_claims, parsed, allowed_source_urls=allowed_urls)
-            return thread.id, parsed, claims, rejected
+            parsed, claims, rejected = processed
+            return returned_thread_id, parsed, claims, rejected
         finally:
             client.close()
 
@@ -327,21 +505,22 @@ class CodexResearchClient:
                 "deterministic_theoretical_energy": dict(theoretical_energy or {}),
             })
         client = self.client_factory(CodexConfig(cwd=self.cwd))
-        try:
-            thread = client.thread_resume(thread_id, approval_mode=ApprovalMode.deny_all, sandbox=Sandbox.read_only) if thread_id else client.thread_start(
-                approval_mode=ApprovalMode.deny_all,
-                sandbox=Sandbox.read_only,
-                developer_instructions="Use only supplied evidence. Do not access files, network, or run commands.",
-                ephemeral=False,
-            )
-            result = thread.run(
-                json.dumps({"context_type": "research_evidence", **payload}, ensure_ascii=False),
-                output_schema=GUIDANCE_OUTPUT_SCHEMA,
-            )
-            if "completed" not in str(result.status).casefold() or result.error or not result.final_response:
-                raise CodexResearchError("Codex project assessment failed: {}".format(result.error or result.status))
+
+        def process(response: str) -> dict:
             from .guidance import validate_guidance_payload
-            return thread.id, validate_guidance_payload(_parse_json(result.final_response))
+            return validate_guidance_payload(_parse_json(response))
+
+        try:
+            returned_thread_id, guidance = self._invoke(
+                client,
+                stage="codex_assessment",
+                request_payload={"context_type": "research_evidence", **payload},
+                developer_instructions=DEVELOPER_INSTRUCTIONS,
+                output_schema=GUIDANCE_OUTPUT_SCHEMA,
+                requested_thread_id=thread_id,
+                processor=process,
+            )
+            return returned_thread_id, guidance
         finally:
             client.close()
 
@@ -382,17 +561,19 @@ class CodexResearchClient:
             "All findings are candidates for local review, not automatically approved knowledge."
         )
         client = self.client_factory(CodexConfig(cwd=str(web_cwd), config_overrides=('web_search="live"',)))
-        try:
-            thread = client.thread_start(
-                approval_mode=ApprovalMode.deny_all,
-                sandbox=Sandbox.read_only,
-                developer_instructions=developer,
-                ephemeral=False,
-            )
-            result = thread.run(json.dumps(task, ensure_ascii=False))
-            if "completed" not in str(result.status).casefold() or result.error or not result.final_response:
-                raise CodexResearchError("Codex online research failed: {}".format(result.error or result.status))
+
+        def process(response: str) -> dict:
             from .web_research import validate_web_research
-            return validate_web_research(_parse_json(result.final_response))
+            return validate_web_research(_parse_json(response))
+
+        try:
+            _thread_id, validated = self._invoke(
+                client,
+                stage="online_research",
+                request_payload={"context_type": "online_research", **task},
+                developer_instructions=developer,
+                processor=process,
+            )
+            return validated
         finally:
             client.close()
