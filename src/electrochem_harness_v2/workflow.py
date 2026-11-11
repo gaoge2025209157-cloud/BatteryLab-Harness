@@ -10,6 +10,7 @@ from pathlib import Path
 from .benchmarks import build_benchmark_topics
 from .gcd_metrics import build_codex_feature_packet
 from .codex_client import CodexResearchClient
+from .context_builder import ContextBuilder, ContextBuildResult
 from .csv_importer import GcdCsvImporter
 from .origin_adapter import OriginAdapter
 from .origin_data import prepare_origin_tables
@@ -39,12 +40,22 @@ class ResearchWorkflow:
         self.csv_importer = GcdCsvImporter()
         self._source_newness: dict[str, bool] = {}
         origin_executable = None
+        config: dict = {}
         config_path = self.project_root / "config.json"
         if config_path.is_file():
             try:
-                origin_executable = (json.loads(config_path.read_text(encoding="utf-8")) or {}).get("origin_executable")
+                config = json.loads(config_path.read_text(encoding="utf-8")) or {}
             except json.JSONDecodeError as error:
                 raise ValueError("config.json is not valid JSON.") from error
+            origin_executable = config.get("origin_executable")
+        context_config = dict(config.get("context_management") or {})
+        allowed_context_keys = {
+            "max_input_tokens", "reserved_output_tokens", "max_approved_claims",
+            "max_candidate_claims", "max_metadata_records",
+        }
+        self.context_builder = ContextBuilder(**{
+            key: value for key, value in context_config.items() if key in allowed_context_keys
+        })
         self.origin_adapter = OriginAdapter(self.project_root / "scripts" / "run_origin.ps1", origin_executable=origin_executable)
 
     def create_project(self, name: str, material_system: str, keywords: list[str]) -> str:
@@ -98,6 +109,92 @@ class ResearchWorkflow:
             })
         return summaries
 
+    def _context_task(self, project_id: str, stage: str, run_id: str | None = None, source_id: str | None = None) -> dict:
+        state = self.store.get_research_state(project_id)
+        goals = {
+            "pdf_candidate_extraction": "从本地PDF的受限证据片段中提取可追溯候选知识，不形成已批准结论。",
+            "online_research": "围绕当前确定性数据特征和课题问题检索相关学术来源，明确证据边界。",
+            "literature_synthesis": "从本地与联网候选证据中筛选少量高价值知识，提交研究人员审核。",
+            "codex_assessment": "结合确定性数据、已批准知识和明确标注的候选证据，形成竞争解释与下一轮判别实验。",
+        }
+        criteria = {
+            "pdf_candidate_extraction": ["每项候选知识引用有效证据片段", "候选知识保持candidate状态", "不编造PDF外信息"],
+            "online_research": ["来源可追溯", "检索围绕当前数据现象", "明确摘要或网页线索的候选属性"],
+            "literature_synthesis": ["最多保留六项高价值候选", "说明研究问题、测试、发现和借鉴方式", "所有结果等待人工审核"],
+            "codex_assessment": ["区分数据事实、批准知识和候选解释", "每项假设包含支持、反对与反证实验", "下一轮实验改变一个变量并说明预期证据"],
+        }
+        suffix = source_id or run_id or project_id
+        safe_suffix = "".join(char if char.isalnum() or char in "._-" else "-" for char in str(suffix))
+        return {
+            "task_id": "{}-{}".format(stage, safe_suffix),
+            "stage": stage,
+            "goal": goals.get(stage, "为当前课题构建受控、可追溯的模型上下文。"),
+            "success_criteria": criteria.get(stage, ["上下文可追溯", "输出符合科学边界"]),
+            "current_question": state.get("next_intent") or "；".join(str(value) for value in state.get("open_questions") or []),
+            "open_questions": list(state.get("open_questions") or []),
+        }
+
+    def _persist_context(self, project_id: str, stage: str, result: ContextBuildResult, run_id: str | None = None) -> tuple[Path, Path]:
+        if run_id:
+            base = self.output_root / project_id / "runs" / run_id
+            directory = base / "contexts"
+        else:
+            base = None
+            directory = self.output_root / project_id / "contexts"
+        directory.mkdir(parents=True, exist_ok=True)
+        bundle_path = directory / "{}.bundle.json".format(stage)
+        manifest_path = directory / "{}.manifest.json".format(stage)
+        bundle_path.write_text(json.dumps(dict(result.bundle), ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
+        manifest_path.write_text(json.dumps(dict(result.manifest), ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
+        self.store.save_context_record(project_id, run_id, stage, dict(result.manifest))
+        if base is not None:
+            bundle_ref = "contexts/{}.bundle.json".format(stage)
+            manifest_ref = "contexts/{}.manifest.json".format(stage)
+            self._update_manifest(base, artifact=bundle_ref)
+            self._update_manifest(base, artifact=manifest_ref, **{
+                "{}_context_hash".format(stage): result.context_hash,
+                "{}_context_tokens_estimated".format(stage): result.estimated_input_tokens,
+            })
+        return bundle_path, manifest_path
+
+    def _build_managed_context(
+        self,
+        project_id: str,
+        stage: str,
+        *,
+        run_id: str | None = None,
+        source_id: str | None = None,
+        conditions: dict | None = None,
+        analysis: dict | None = None,
+        candidate_metadata: list[dict] | None = None,
+        online_research: dict | None = None,
+        origin_status: dict | None = None,
+        theoretical_energy: dict | None = None,
+    ) -> ContextBuildResult:
+        project_context = self._build_research_context(project_id, conditions, analysis)
+        result = self.context_builder.build(
+            stage=stage,
+            task=self._context_task(project_id, stage, run_id=run_id, source_id=source_id),
+            project_context=project_context,
+            claims=self.store.list_claims(project_id),
+            research_memory=self.store.get_research_state(project_id),
+            candidate_metadata=candidate_metadata or [],
+            online_research=online_research or {},
+            origin_status=origin_status or {},
+            theoretical_energy=theoretical_energy or {},
+            permissions={
+                "network_access": stage == "online_research",
+                "raw_data_access": False,
+                "write_original_data": False,
+                "approve_knowledge": False,
+                "control_equipment": False,
+            },
+            model_identity={"provider": "openai-codex", "adapter": "CodexResearchClient"},
+            run_id=run_id,
+        )
+        self._persist_context(project_id, stage, result, run_id=run_id)
+        return result
+
     def learn_local_pdf(self, project_id: str, path: Path | str):
         source_hash = self.pdf_reader.file_sha256(path)
         existing = self.store.find_source(project_id, source_hash)
@@ -139,9 +236,14 @@ class ResearchWorkflow:
 
     def extract_pdf_candidates(self, project_id: str, source_id: str, thread_id: str | None = None):
         spans = self.store.list_source_spans(source_id)
+        managed_context = self._build_managed_context(
+            project_id,
+            "pdf_candidate_extraction",
+            source_id=source_id,
+        )
         client = CodexResearchClient(str(self.project_root))
         returned_thread_id, claims, rejected = client.extract_candidates(
-            self._build_research_context(project_id),
+            managed_context.bundle,
             source_id,
             spans,
             thread_id=thread_id,
@@ -165,10 +267,31 @@ class ResearchWorkflow:
             if output_dir:
                 self._record_codex_activity(output_dir, "CODEX_KNOWLEDGE", "SKIPPED", "没有可供 Codex 提炼的文献候选", {})
             return {"status": "NO_REVIEW_ITEMS", "knowledge_items": [], "claims": [], "rejected": [], "research_gaps": []}
+        conditions = None
+        analysis_payload = None
+        context_run_id = run_id
+        if run_id:
+            try:
+                run = self.store.get_run(run_id)
+            except KeyError:
+                context_run_id = None
+            else:
+                conditions = run["input_conditions"]
+                analysis_path = self.output_root / project_id / "runs" / run_id / "analysis.json"
+                if analysis_path.is_file():
+                    analysis_payload = json.loads(analysis_path.read_text(encoding="utf-8"))
+        managed_context = self._build_managed_context(
+            project_id,
+            "literature_synthesis",
+            run_id=context_run_id,
+            conditions=conditions,
+            analysis=analysis_payload,
+            online_research=online,
+        )
         client = CodexResearchClient(str(self.project_root))
         try:
             returned_thread_id, digest, claims, rejected = client.synthesize_literature(
-                research_context or self._build_research_context(project_id),
+                managed_context.bundle,
                 raw_candidates,
                 online_research=online,
                 thread_id=thread_id,
@@ -280,9 +403,17 @@ class ResearchWorkflow:
                 search = adapter.search([topic], rows=5)
                 query_audit.append({"query": search.query, "searched_at": search.searched_at, "status": search.status, "error": search.error, "record_count": len(search.records), "records": self._record_summaries(search.records, limit=8)})
                 api_records.extend(search.records)
+            managed_context = self._build_managed_context(
+                project_id,
+                "online_research",
+                run_id=run_id,
+                conditions=run["input_conditions"],
+                analysis=analysis_payload,
+                candidate_metadata=api_records,
+            )
             codex = CodexResearchClient(str(self.project_root))
             online = codex.research_online(
-                research_context,
+                managed_context.bundle,
                 topics,
                 api_records,
             )
@@ -333,21 +464,41 @@ class ResearchWorkflow:
             raise ValueError("Run requires deterministic analysis and an Origin manifest before Codex assessment.")
         analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
         feature_packet = build_codex_feature_packet(analysis)
-        (output_dir / "codex_input_manifest.json").write_text(json.dumps({"consumer": "CodexResearchClient.evaluate_project", "source_sha256": feature_packet.get("source_sha256"), "fields": sorted(feature_packet.keys()), "point_level_input_sent": False, "row_level_input_sent": False}, ensure_ascii=False, indent=2), encoding="utf-8")
         origin = json.loads(origin_path.read_text(encoding="utf-8"))
         benchmark_path = output_dir / "benchmark_research.json"
         benchmark = json.loads(benchmark_path.read_text(encoding="utf-8")) if benchmark_path.is_file() else {}
         approved_claims = self.store.list_approved_claims(project_id)
-        self._record_codex_activity(output_dir, "CODEX_ASSESSMENT", "STARTED", "开始基于特征包、Origin 状态和批准证据评估课题", {
+        managed_context = self._build_managed_context(
+            project_id,
+            "codex_assessment",
+            run_id=run_id,
+            conditions=run["input_conditions"],
+            analysis=analysis,
+            online_research=benchmark.get("codex_web_research") or {},
+            origin_status=origin,
+            theoretical_energy=benchmark.get("theoretical_energy") or {},
+        )
+        (output_dir / "codex_input_manifest.json").write_text(json.dumps({
+            "consumer": "CodexResearchClient.evaluate_project",
+            "managed_context": "contexts/codex_assessment.bundle.json",
+            "context_manifest": "contexts/codex_assessment.manifest.json",
+            "context_hash": managed_context.context_hash,
+            "source_sha256": feature_packet.get("source_sha256"),
+            "fields": sorted(managed_context.bundle.keys()),
+            "point_level_input_sent": False,
+            "row_level_input_sent": False,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._record_codex_activity(output_dir, "CODEX_ASSESSMENT", "STARTED", "开始基于受控上下文、Origin状态和分级证据评估课题", {
             "approved_claim_count": len(approved_claims),
-            "feature_fields": sorted(feature_packet.keys()),
+            "context_hash": managed_context.context_hash,
+            "context_tokens_estimated": managed_context.estimated_input_tokens,
             "origin_status": origin.get("status"),
             "online_source_count": len((benchmark.get("codex_web_research") or {}).get("sources") or []),
         })
         client = CodexResearchClient(str(self.project_root))
         try:
             next_thread_id, guidance = client.evaluate_project(
-                self._build_research_context(project_id, run["input_conditions"], analysis),
+                managed_context.bundle,
                 feature_packet,
                 origin,
                 approved_claims,
@@ -356,18 +507,41 @@ class ResearchWorkflow:
                 thread_id=thread_id,
             )
         except Exception as error:
-            self._record_codex_activity(output_dir, "CODEX_ASSESSMENT", "FAILED", "Codex 课题评估失败", {"error": str(error)})
+            self._record_codex_activity(output_dir, "CODEX_ASSESSMENT", "FAILED", "Codex课题评估失败", {"error": str(error), "context_hash": managed_context.context_hash})
             raise
-        (output_dir / "guidance.json").write_text(json.dumps({"thread_id": next_thread_id, "basis": {"analysis": "analysis.json", "origin": "origin/origin_manifest.json", "benchmark_research": "benchmark_research.json", "approved_claim_count": len(approved_claims)}, "guidance": guidance}, ensure_ascii=False, indent=2), encoding="utf-8")
-        self._record_codex_activity(output_dir, "CODEX_ASSESSMENT", "COMPLETED", "Codex 已生成课题判断和下一轮实验建议", {
+        research_state = self.store.record_guidance_state(project_id, run_id, guidance)
+        (output_dir / "guidance.json").write_text(json.dumps({
+            "thread_id": next_thread_id,
+            "basis": {
+                "analysis": "analysis.json",
+                "origin": "origin/origin_manifest.json",
+                "benchmark_research": "benchmark_research.json",
+                "managed_context": "contexts/codex_assessment.bundle.json",
+                "context_manifest": "contexts/codex_assessment.manifest.json",
+                "context_hash": managed_context.context_hash,
+                "approved_claim_count": len(approved_claims),
+            },
+            "research_state_version": research_state.get("row_version"),
+            "guidance": guidance,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._record_codex_activity(output_dir, "CODEX_ASSESSMENT", "COMPLETED", "Codex已生成课题判断和下一轮实验建议", {
             "assessment": str(guidance.get("assessment") or "")[:1200],
             "data_fact_count": len(guidance.get("data_facts") or []),
             "hypothesis_count": len(guidance.get("hypotheses") or []),
             "cannot_determine_count": len(guidance.get("cannot_determine") or []),
             "benchmark_comparison_count": len(guidance.get("benchmark_comparisons") or []),
             "next_experiment_count": len(guidance.get("next_experiments") or []),
+            "context_hash": managed_context.context_hash,
         })
-        self._update_manifest(output_dir, artifact="guidance.json", codex_input_manifest="codex_input_manifest.json", codex_assessment_status="COMPLETED")
+        self._update_manifest(
+            output_dir,
+            artifact="guidance.json",
+            codex_input_manifest="codex_input_manifest.json",
+            codex_context_manifest="contexts/codex_assessment.manifest.json",
+            codex_context_hash=managed_context.context_hash,
+            research_state_version=research_state.get("row_version"),
+            codex_assessment_status="COMPLETED",
+        )
         return next_thread_id, guidance
 
     def run_all(
@@ -560,6 +734,12 @@ class ResearchWorkflow:
         benchmark_path = output_dir / "benchmark_research.json"
         if benchmark_path.is_file():
             benchmark = json.loads(benchmark_path.read_text(encoding="utf-8")) or {}
+        context_manifest_path = output_dir / "contexts" / "codex_assessment.manifest.json"
+        if context_manifest_path.is_file():
+            try:
+                benchmark["context_manifest"] = json.loads(context_manifest_path.read_text(encoding="utf-8")) or {}
+            except (OSError, json.JSONDecodeError):
+                benchmark["context_manifest"] = {"status": "unreadable"}
         review_path = output_dir / "literature_review.json"
         if review_path.is_file():
             benchmark["codex_review"] = json.loads(review_path.read_text(encoding="utf-8")) or {}

@@ -49,8 +49,14 @@ def validate_guidance_payload(payload: Mapping[str, Any]) -> dict:
             raise ValueError("Every next experiment requires an action.")
         experiments.append({
             "action": action,
+            "hypothesis": str(row.get("hypothesis") or "").strip(),
+            "purpose": str(row.get("purpose") or "").strip(),
             "variable": str(row.get("variable") or row.get("controlled_variable") or "").strip(),
+            "controls": [str(value) for value in row.get("controls") or [] if str(value).strip()],
             "expected_evidence": str(row.get("expected_evidence") or row.get("expected_result") or "").strip(),
+            "expected_if_supported": str(row.get("expected_if_supported") or "").strip(),
+            "expected_if_refuted": str(row.get("expected_if_refuted") or "").strip(),
+            "requires_confirmation": bool(row.get("requires_confirmation", True)),
         })
     comparisons = []
     for item in payload["benchmark_comparisons"]:

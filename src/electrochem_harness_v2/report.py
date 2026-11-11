@@ -142,6 +142,31 @@ def _research_synthesis_html(synthesis: Mapping) -> str:
             ))
 
 
+def _context_audit_html(manifest: Mapping) -> str:
+    if not manifest:
+        return "<p class='muted'>本轮未生成统一上下文清单。</p>"
+    if manifest.get("status") == "unreadable":
+        return "<p class='muted'>本轮上下文清单无法读取，模型依据需人工核查。</p>"
+    counts = dict(manifest.get("knowledge_counts") or {})
+    context_hash = str(manifest.get("context_hash") or "")
+    excluded = list(manifest.get("excluded_sources") or [])
+    warnings = list(manifest.get("warnings") or [])
+    rows = [
+        ("上下文哈希", context_hash[:20] + ("…" if len(context_hash) > 20 else "")),
+        ("估算输入Token", manifest.get("input_tokens_estimated") or 0),
+        ("已批准知识", counts.get("approved", 0)),
+        ("待审核候选知识", counts.get("candidate", 0)),
+        ("联网候选来源", counts.get("online_sources", 0)),
+        ("被排除来源", len(excluded)),
+    ]
+    table = "".join("<tr><th>{}</th><td>{}</td></tr>".format(_text(label), _text(value)) for label, value in rows)
+    notes = ""
+    if warnings:
+        notes = "<p class='muted'><b>上下文警告：</b>{}</p>".format(_text("；".join(map(str, warnings))))
+    return ("<table class='conditions'><tbody>{}</tbody></table>{}"
+            "<p class='muted'>上下文清单记录模型实际使用和排除的来源；候选知识不会被标记为正式科学依据。</p>".format(table, notes))
+
+
 def _capacity_trend_html(cycles) -> str:
     complete = [row for row in cycles or [] if row.get("complete")]
     if not complete:
@@ -310,6 +335,7 @@ def write_report(
     capacity_trend = _capacity_trend_html(analysis.get("cycles") or [])
     academic_reference = _reference_html(web, maximum_capacity)
     energy_reference = _energy_reference_html(theory, web)
+    context_audit = _context_audit_html(benchmark.get("context_manifest") or {})
 
     body = """<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
 <title>{project_name}｜电化学研究报告</title><style>
@@ -320,7 +346,7 @@ def write_report(
 <section class='panel'><h2>二、实验数据分析</h2><div class='metrics'>{metrics}</div><div class='figures'>{figures}</div><h3>放电比容量变化趋势</h3>{capacity_trend}<h3>当前峰值与同行评议文献参考</h3>{academic_reference}<h3>理论比能量与商用电池情境参考</h3>{energy_reference}<h3>数据趋势与解释边界</h3>{observations}{li_s_context}<h3>需要首先核验的数据边界</h3>{risks}<p class='muted'>{theory_note}</p></section>
 <section class='panel'><h2>三、当前课题阶段定位</h2><div class='callout'>{stage_statement}</div><h3>阶段性判断</h3><p>{direction_headline}</p><p>下一阶段应以可重复的对照实验和状态明确的表征为核心。只有当质量口径、循环边界和测试条件得到统一后，才能将容量保持与极化变化用于讨论材料和界面机制。</p>{hypotheses}</section>
 <section class='panel'><h2>四、Codex 联网文献学习明细</h2><p>Codex 已围绕课题材料、容量归属、反应可逆性及固态正极极化诊断筛选关键学术文献。检索只保留同行评议论文、期刊 DOI 页面与学术数据库线索，不展示商业标准或产品页面；网页候选的性能数值不直接写入本课题结论。</p>{research_synthesis}{literature_items}</section>
-<section class='panel'><h2>五、综合结论与下一步实验</h2><div class='callout'><b>{conclusion_label}：</b>{conclusion}</div><h3>当前结论</h3>{direction_observations}<h3>建议的实验路线</h3><table><thead><tr><th>顺序</th><th>实验设计</th><th>唯一改变项</th><th>预期判定证据</th></tr></thead><tbody>{experiments}</tbody></table></section>
+<section class='panel'><h2>五、综合结论与下一步实验</h2><div class='callout'><b>{conclusion_label}：</b>{conclusion}</div><h3>当前结论</h3>{direction_observations}<h3>建议的实验路线</h3><table><thead><tr><th>顺序</th><th>实验设计</th><th>唯一改变项</th><th>预期判定证据</th></tr></thead><tbody>{experiments}</tbody></table><h3>本轮Codex上下文与依据</h3>{context_audit}</section>
 </main></body></html>""".format(
         project_name=_text(project_name), material_system=_text(material_system), keywords=_text(keywords),
         conditions=_mapping_rows(conditions), metrics=metrics, figures=figures_html,
@@ -333,6 +359,7 @@ def write_report(
         conclusion_label=_text(conclusion_label), conclusion=_text(conclusion),
         direction_observations=_list(direction["observations"], "本轮缺少足以形成阶段性判断的完整循环数据。"),
         experiments="".join(experiments) or "<tr><td colspan='4' class='muted'>暂无可执行的实验建议。</td></tr>",
+        context_audit=context_audit,
     )
     target.write_text(body, encoding="utf-8")
     return target

@@ -45,6 +45,10 @@ class LiteratureSynthesisWorkflowTests(unittest.TestCase):
             saved = json.loads((root / "outputs" / project_id / "runs" / "run-1" / "literature_review.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["research_gaps"], ["需要确认质量分母"])
             client.synthesize_literature.assert_called_once()
+            managed_context = client.synthesize_literature.call_args.args[0]
+            self.assertEqual(managed_context["schema_version"], "2.0")
+            self.assertEqual(managed_context["stage"], "literature_synthesis")
+            self.assertEqual(managed_context["candidate_knowledge"][0]["status"], "candidate")
 
 
 if __name__ == "__main__":

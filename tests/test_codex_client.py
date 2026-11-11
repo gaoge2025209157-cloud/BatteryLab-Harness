@@ -70,6 +70,29 @@ class CodexLiteratureSynthesisTests(unittest.TestCase):
         self.assertEqual(rejected, [])
         self.assertIsInstance(_FakeClient.last_instance.thread.last_input, str)
 
+    def test_managed_context_is_the_single_synthesis_context(self):
+        import json
+        from electrochem_harness_v2.codex_client import CodexResearchClient
+
+        managed = {
+            "schema_version": "2.0",
+            "task": {"task_id": "task-1"},
+            "project": {"project_id": "project-1"},
+            "candidate_knowledge": [],
+            "candidate_online_research": {"sources": [{"url": "https://example.org/paper"}]},
+        }
+        client = CodexResearchClient(".", client_factory=_FakeClient)
+        client.synthesize_literature(
+            managed,
+            [],
+            online_research={"sources": [{"title": "Key paper", "url": "https://example.org/paper"}]},
+        )
+        sent = json.loads(_FakeClient.last_instance.thread.last_input)
+        self.assertEqual(sent["managed_context"]["schema_version"], "2.0")
+        self.assertNotIn("project_context", sent)
+        self.assertNotIn("local_pdf_candidates", sent)
+        self.assertNotIn("codex_web_research", sent)
+
 
 class CodexSchemaTests(unittest.TestCase):
     def test_guidance_schema_requires_every_declared_nested_property(self):
